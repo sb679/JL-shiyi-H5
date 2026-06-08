@@ -60,7 +60,7 @@ Google Books API Key 属于前端可见配置，上线后建议在 Google Cloud 
 
 - 书城列表：搜索、分类筛选、校区/学院/专业叠加筛选、排序、响应式卡片
 - 书籍详情：联系方式隐私门槛、想买、留言、举报
-- 发布书籍：Google Books ISBN 查询、图片 URL、本地多图选择与预览；除数量外，其余内容均可为空
+- 发布书籍：Google Books ISBN 查询、图片 URL、本地多图选择与预览；除数量外，其余内容均可为空；不强制默认图片
 - 我的书籍：状态切换、下架操作
 - 个人资料编辑
 - 本地演示登录
@@ -75,6 +75,8 @@ Google Books API Key 属于前端可见配置，上线后建议在 Google Cloud 
 “选择本地图片”支持一次选择多张，前端不设置照片数量上限。生产环境会通过后端接口 `POST /api/uploads/images` 上传到阿里云 OSS，并把 OSS 返回的图片 URL 放入书籍图片列表。
 
 本地开发时，如果只启动 `npm run dev` 而没有启动后端服务，图片上传会失败；需要另开一个终端运行 `npm start`，或部署到 ECS 后通过同一个 Node 服务访问。
+
+如果 ECS 只由 Nginx/IIS 静态目录提供页面，`/api/uploads/images` 不会存在，图片上传会失败。需要让本项目的 Node 服务接管 `8080`，或给 Nginx/IIS 配置 `/api` 反向代理到 Node 服务。
 
 本项目已新增后端上传接口 `POST /api/uploads/images`：
 
@@ -208,6 +210,8 @@ C:\wwwroot\JL-shiyi-H5     # Nginx/IIS 可能正在对外服务的静态目录
 ```
 
 更新脚本会以 `C:\jl-shiyi-h5` 为准构建，然后把 `dist` 同步到 `C:\wwwroot\JL-shiyi-H5`，避免公网页面仍显示旧版本。
+
+如果旧 `.env` 里仍是 `PORT=3000`，更新脚本会自动改为 `PORT=8080`，让 Node 服务与公网访问端口一致。
 
 ### 开启自动同步
 

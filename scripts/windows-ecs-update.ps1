@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $InstallDir = 'C:\jl-shiyi-h5'
 $PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
+$DesiredPublicPort = '8080'
 
 function Write-Section($Text) {
   Write-Host "`n== $Text ==" -ForegroundColor Cyan
@@ -12,6 +13,25 @@ function Read-DotEnvValue($Path, $Name, $DefaultValue) {
   $Line = Get-Content $Path | Where-Object { $_ -match "^$Name=" } | Select-Object -First 1
   if (-not $Line) { return $DefaultValue }
   return ($Line -replace "^$Name=", '').Trim()
+}
+
+function Set-DotEnvValue($Path, $Name, $Value) {
+  $Lines = if (Test-Path $Path) { @(Get-Content $Path) } else { @() }
+  $Found = $false
+  $NextLines = $Lines | ForEach-Object {
+    if ($_ -match "^$Name=") {
+      $Found = $true
+      "$Name=$Value"
+    } else {
+      $_
+    }
+  }
+
+  if (-not $Found) {
+    $NextLines += "$Name=$Value"
+  }
+
+  Set-Content -Path $Path -Value $NextLines -Encoding UTF8
 }
 
 function Restart-App($Port, $TaskName) {
@@ -77,7 +97,12 @@ if (-not (Test-Path '.env')) {
   throw "Missing $InstallDir\.env. Run scripts/windows-ecs-deploy.ps1 first, or create .env with server runtime variables."
 }
 
-$Port = Read-DotEnvValue '.env' 'PORT' '8080'
+$Port = Read-DotEnvValue '.env' 'PORT' $DesiredPublicPort
+if ($Port -ne $DesiredPublicPort) {
+  Write-Host "Updating .env PORT from $Port to $DesiredPublicPort for the public ECS site." -ForegroundColor Yellow
+  Set-DotEnvValue '.env' 'PORT' $DesiredPublicPort
+  $Port = $DesiredPublicPort
+}
 
 Write-Section 'Checking latest code'
 $CurrentCommit = git rev-parse HEAD
@@ -86,6 +111,9 @@ $RemoteCommit = git rev-parse origin/main
 
 if ($CurrentCommit -eq $RemoteCommit) {
   Write-Host 'Already up to date. No rebuild needed.' -ForegroundColor Green
+  if (Test-Path (Join-Path $InstallDir 'dist')) {
+    Sync-PublicMirror $InstallDir $PublicMirrorDir
+  }
   if (-not (Test-AppHealth $Port)) {
     Write-Host 'App health check failed. Restarting app on the configured public port.' -ForegroundColor Yellow
     Restart-App $Port $TaskName

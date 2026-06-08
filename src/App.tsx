@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useMemo, useState } from 'react';
+import { ChangeEvent, CompositionEvent, FormEvent, useMemo, useState } from 'react';
 import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
@@ -26,7 +26,6 @@ const GOOGLE_BOOKS_API_KEY = ((import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as stri
 const UPLOAD_ENDPOINT = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '/api/uploads/images';
 const DEFAULT_BOOK_TITLE = '未填写书名';
 const DEFAULT_BOOK_AUTHOR = '未填写作者';
-const DEFAULT_BOOK_IMAGE_URL = 'https://placehold.co/900x1200?text=JL%E6%8B%BE%E9%81%97';
 const CHINESE_ONLY_PATTERN = /^[\u4e00-\u9fff]*$/;
 const locationFieldLabels = {
   campus: '校区',
@@ -187,7 +186,7 @@ function useAppState() {
       author: draft.author.trim() || DEFAULT_BOOK_AUTHOR,
       isbn: draft.isbn.trim() || undefined,
       category: draft.category,
-      images: (draft.imageUrls.map((url) => url.trim()).filter(Boolean).length > 0 ? draft.imageUrls.map((url) => url.trim()).filter(Boolean) : [DEFAULT_BOOK_IMAGE_URL]).map((url, index) => ({ id: createId('img'), url, sortOrder: index })),
+      images: draft.imageUrls.map((url) => url.trim()).filter(Boolean).map((url, index) => ({ id: createId('img'), url, sortOrder: index })),
       priceCents: Math.round(Number(draft.priceYuan || 0) * 100),
       quantity: draft.quantity,
       condition: draft.condition,
@@ -377,7 +376,7 @@ function BookCard({ book, state, mine, onRemove }: { book: Book; state: AppState
   return (
     <article className="book-card">
       <Link to={`/books/${book.id}`} className="book-card-main">
-        <div className="book-cover-wrap"><img src={book.images[0]?.url} alt={book.title} />{extraImages > 0 && <span className="image-count">+{extraImages}</span>}</div>
+        <div className="book-cover-wrap">{book.images[0]?.url ? <img src={book.images[0].url} alt={book.title} /> : <div className="no-cover"><BookOpen size={26} /><span>无图片</span></div>}{extraImages > 0 && <span className="image-count">+{extraImages}</span>}</div>
         <div className="book-card-body"><div className="card-title-line"><h2>{book.title}</h2><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span></div><p>{book.author}</p><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span>{book.campus && <span>{book.campus}</span>}{book.department && <span>{book.department}</span>}</div><div className="card-meta"><strong>{formatPrice(book.priceCents)}</strong><span>{count} 人想买</span><span>{mine ? formatDate(book.updatedAt) : maskName(seller?.nickname || '同学')}</span></div>{book.lastMessageAt && <div className="message-hint">最近留言 {formatDate(book.lastMessageAt)}</div>}</div>
       </Link>
       {onRemove && <button className="text-danger card-action" onClick={onRemove} type="button"><Trash2 size={16} /> 下架</button>}
@@ -428,7 +427,7 @@ function DetailPage({ state }: { state: AppState }) {
     <section className="detail-layout">
       <button className="ghost-button back-button" onClick={() => navigate(-1)} type="button"><ChevronLeft size={18} /> 返回</button>
       {notice && <div className="toast">{notice}<button onClick={() => setNotice('')} type="button">关闭</button></div>}
-      <div className="detail-media surface-panel"><img src={currentImage} alt={book.title} />{book.images.length > 1 && <div className="thumb-row">{book.images.map((image, index) => <button className={selectedImage === index ? 'active' : ''} key={image.id} onClick={() => setSelectedImage(index)} type="button"><img src={image.url} alt={`${book.title} 图片 ${index + 1}`} /></button>)}</div>}</div>
+      <div className="detail-media surface-panel">{currentImage ? <img src={currentImage} alt={book.title} /> : <div className="no-cover large"><BookOpen size={40} /><span>暂无图片</span></div>}{book.images.length > 1 && <div className="thumb-row">{book.images.map((image, index) => <button className={selectedImage === index ? 'active' : ''} key={image.id} onClick={() => setSelectedImage(index)} type="button"><img src={image.url} alt={`${book.title} 图片 ${index + 1}`} /></button>)}</div>}</div>
       <div className="detail-main page-stack">
         <section className="surface-panel detail-summary"><div className="card-title-line"><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span><span className="subtle">{formatDate(book.createdAt)}</span></div><h1>{book.title}</h1><p className="lead-text">{book.author}{book.isbn ? ` · ISBN ${book.isbn}` : ''}</p><div className="price-line">{formatPrice(book.priceCents)}</div><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span><span>{interests.length} 人想买</span></div><p className="book-description">{book.description}</p><div className="seller-box"><CircleUserRound size={32} /><div><strong>{seller?.nickname || '同学'}</strong><span>{locationPath(book)}</span></div></div></section>
         <section className="surface-panel action-panel"><h2>交易操作</h2>{user && !isOwner && !hasInterest && book.status === 'available' && <button className="primary-button full-width" onClick={() => { run(() => state.expressInterest(book), '已记录想买，联系方式已解锁'); setShowContact(true); }} type="button"><Check size={18} /> 我想买</button>}{user && !isOwner && hasInterest && <button className="secondary-button full-width" onClick={() => setShowContact(true)} type="button"><ShieldCheck size={18} /> 查看联系方式</button>}{!user && <Link className="primary-button full-width" to="/login"><LogIn size={18} /> 登录后联系卖家</Link>}{isOwner && book.status !== 'sold' && interests.map((interest) => <button key={interest.id} className="secondary-button" onClick={() => run(() => state.confirmSold(book, interest.buyerId), '已确认成交')} type="button">确认卖给 {state.userById(interest.buyerId)?.nickname || '买家'}</button>)}{(showContact || isOwner) && user && (hasInterest || isOwner) && <div className="contact-box"><ShieldCheck size={18} /><div><span>已授权查看联系方式</span><strong>{book.contact}</strong></div></div>}</section>
@@ -446,9 +445,10 @@ function ReviewItem({ evaluation }: { evaluation: Evaluation }) {
 
 function PublishPage({ state }: { state: AppState }) {
   const navigate = useNavigate();
-  const [draft, setDraft] = useState<PublishDraft>({ title: '', author: '', isbn: '', category: 'textbook', priceYuan: '', quantity: 1, condition: 'like_new', contact: '', description: '', campus: state.user?.campus || '', department: state.user?.department || '', college: state.user?.college || '', major: state.user?.major || '', imageUrls: ['https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=900&q=80'] });
+  const [draft, setDraft] = useState<PublishDraft>({ title: '', author: '', isbn: '', category: 'textbook', priceYuan: '', quantity: 1, condition: 'like_new', contact: '', description: '', campus: state.user?.campus || '', department: state.user?.department || '', college: state.user?.college || '', major: state.user?.major || '', imageUrls: [] });
   const [note, setNote] = useState('');
   const [isbnLoading, setIsbnLoading] = useState(false);
+  const [composingLocationField, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
   if (!state.user) return <LoginRequired />;
   function setField<K extends keyof PublishDraft>(key: K, value: PublishDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -509,6 +509,13 @@ function PublishPage({ state }: { state: AppState }) {
   function addImageUrl() {
     setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, ''] }));
   }
+  function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) {
+    setField(key, composingLocationField === key ? value : keepChineseOnly(value));
+  }
+  function finishLocationComposition(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, event: CompositionEvent<HTMLInputElement>) {
+    setComposingLocationField(null);
+    setField(key, keepChineseOnly(event.currentTarget.value));
+  }
   function submit(event: FormEvent) {
     event.preventDefault();
     const imageUrls = draft.imageUrls.map((url) => url.trim()).filter(Boolean);
@@ -522,7 +529,7 @@ function PublishPage({ state }: { state: AppState }) {
       <div className="isbn-row"><label>ISBN<input value={draft.isbn} onChange={(event) => setField('isbn', event.target.value)} placeholder="输入 ISBN 后查询" /></label><button className="secondary-button" disabled={isbnLoading} type="button" onClick={lookupIsbn}><Search size={16} /> {isbnLoading ? '查询中' : '查询'}</button></div>
       <label>书名<input value={draft.title} onChange={(event) => setField('title', event.target.value)} /></label><label>作者<input value={draft.author} onChange={(event) => setField('author', event.target.value)} /></label>
       <div className="form-grid"><label>分类<select value={draft.category} onChange={(event) => setField('category', event.target.value as BookCategory)}>{(['textbook', 'novel', 'reference', 'other'] as BookCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}</select></label><label>新旧程度<select value={draft.condition} onChange={(event) => setField('condition', event.target.value as BookCondition)}>{(Object.keys(conditionLabels) as BookCondition[]).map((item) => <option key={item} value={item}>{conditionLabels[item]}</option>)}</select></label><label>价格<input type="number" min="0" step="0.5" value={draft.priceYuan} onChange={(event) => setField('priceYuan', event.target.value)} /></label><label>数量<input type="number" min="1" max="9" value={draft.quantity} onChange={(event) => setField('quantity', Number(event.target.value))} /></label></div>
-      <div className="form-grid"><label>校区<input value={draft.campus} onChange={(event) => setField('campus', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label><label>学部<input value={draft.department} onChange={(event) => setField('department', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label><label>学院<input value={draft.college} onChange={(event) => setField('college', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label><label>专业<input value={draft.major} onChange={(event) => setField('major', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label></div>
+      <div className="form-grid"><label>校区<input value={draft.campus} onCompositionStart={() => setComposingLocationField('campus')} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="只能输入中文" /></label><label>学部<input value={draft.department} onCompositionStart={() => setComposingLocationField('department')} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="只能输入中文" /></label><label>学院<input value={draft.college} onCompositionStart={() => setComposingLocationField('college')} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="只能输入中文" /></label><label>专业<input value={draft.major} onCompositionStart={() => setComposingLocationField('major')} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="只能输入中文" /></label></div>
       <label>联系方式<input value={draft.contact} onChange={(event) => setField('contact', event.target.value)} placeholder="微信号、手机号或邮箱" /></label>
       <div className="privacy-note"><ShieldCheck size={16} /> 联系方式只会在买家表达想买后展示。</div>
       <div className="image-tools"><label className="upload-button"><ImagePlus size={18} /> 选择本地图片<input multiple type="file" accept="image/*" onChange={handleLocalImages} /></label><button className="ghost-button" type="button" onClick={addImageUrl}>添加图片链接</button></div>
