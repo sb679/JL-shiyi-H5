@@ -23,7 +23,8 @@ import type { AppData, Book, BookCategory, BookCondition, BookStatus, Evaluation
 
 const queryClient = new QueryClient();
 const GOOGLE_BOOKS_API_KEY = ((import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined) || '').trim();
-const UPLOAD_ENDPOINT = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '/api/uploads/images';
+const configuredUploadEndpoint = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '';
+const UPLOAD_ENDPOINT = configuredUploadEndpoint || (typeof window === 'undefined' ? '/api/uploads/images' : `${window.location.protocol}//${window.location.hostname}:3000/api/uploads/images`);
 const DEFAULT_BOOK_TITLE = '未填写书名';
 const DEFAULT_BOOK_AUTHOR = '未填写作者';
 const CHINESE_ONLY_PATTERN = /^[\u4e00-\u9fff]*$/;

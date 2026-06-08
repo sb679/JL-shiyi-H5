@@ -76,7 +76,7 @@ Google Books API Key 属于前端可见配置，上线后建议在 Google Cloud 
 
 本地开发时，如果只启动 `npm run dev` 而没有启动后端服务，图片上传会失败；需要另开一个终端运行 `npm start`，或部署到 ECS 后通过同一个 Node 服务访问。
 
-如果 ECS 只由 Nginx/IIS 静态目录提供页面，`/api/uploads/images` 不会存在，图片上传会失败。需要让本项目的 Node 服务接管 `8080`，或给 Nginx/IIS 配置 `/api` 反向代理到 Node 服务。
+当前推荐部署方式是：Nginx/IIS 继续在 `8080` 提供 H5 静态页面，Node 服务单独在 `3000` 提供 `/api/uploads/images` 上传接口。前端默认会从当前域名的 `3000` 端口调用上传 API。
 
 本项目已新增后端上传接口 `POST /api/uploads/images`：
 
@@ -211,7 +211,7 @@ C:\wwwroot\JL-shiyi-H5     # Nginx/IIS 可能正在对外服务的静态目录
 
 更新脚本会以 `C:\jl-shiyi-h5` 为准构建，然后把 `dist` 同步到 `C:\wwwroot\JL-shiyi-H5`，避免公网页面仍显示旧版本。
 
-如果旧 `.env` 里仍是 `PORT=3000`，更新脚本会自动改为 `PORT=8080`，让 Node 服务与公网访问端口一致。
+Node API 使用 `PORT=3000`。H5 页面继续通过 `8080` 访问，避免重启 Node 时影响静态页面。
 
 ### 开启自动同步
 

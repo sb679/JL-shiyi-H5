@@ -71,9 +71,9 @@ $OssPublicBaseUrl = Read-Host 'OSS_PUBLIC_BASE_URL, press Enter to auto-generate
 if ([string]::IsNullOrWhiteSpace($OssPublicBaseUrl)) {
   $OssPublicBaseUrl = "https://$OssBucket.$OssRegion.aliyuncs.com"
 }
-$Port = Read-Host 'PORT, press Enter to use 8080'
+$Port = Read-Host 'Node API PORT, press Enter to use 3000'
 if ([string]::IsNullOrWhiteSpace($Port)) {
-  $Port = '8080'
+  $Port = '3000'
 }
 
 $EnvContent = @"
@@ -94,7 +94,7 @@ npm run build
 Sync-PublicMirror $InstallDir $PublicMirrorDir
 
 Write-Section 'Configuring firewall'
-New-NetFirewallRule -DisplayName "JL拾遗 H5 $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -ErrorAction SilentlyContinue | Out-Null
+New-NetFirewallRule -DisplayName "JL拾遗 H5 API $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
 Write-Section 'Registering startup task'
 $Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\scripts\start-server.ps1`""
@@ -103,14 +103,13 @@ $Principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
 
 Write-Section 'Starting server now'
-Stop-Process -Name nginx -Force -ErrorAction SilentlyContinue
 Stop-Process -Name node -Force -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 3
 
 try {
   Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
-  Write-Host "`nDeployment finished. Open: http://<ECS_PUBLIC_IP>:$Port/" -ForegroundColor Green
+  Write-Host "`nDeployment finished. Open page: http://<ECS_PUBLIC_IP>:8080/ ; upload API: http://<ECS_PUBLIC_IP>:$Port/api/uploads/images" -ForegroundColor Green
 } catch {
   Write-Host "Server task was created, but health check failed. Check Task Scheduler and logs." -ForegroundColor Yellow
   throw

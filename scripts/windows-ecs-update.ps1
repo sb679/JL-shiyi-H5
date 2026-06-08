@@ -3,7 +3,8 @@ $ErrorActionPreference = 'Stop'
 $InstallDir = 'C:\jl-shiyi-h5'
 $PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
-$DesiredPublicPort = '8080'
+$DesiredApiPort = '3000'
+$PublicPagePort = '8080'
 
 function Write-Section($Text) {
   Write-Host "`n== $Text ==" -ForegroundColor Cyan
@@ -35,9 +36,9 @@ function Set-DotEnvValue($Path, $Name, $Value) {
 }
 
 function Restart-App($Port, $TaskName) {
-  Write-Section 'Restarting server task'
-  Stop-Process -Name nginx -Force -ErrorAction SilentlyContinue
+  Write-Section 'Restarting Node API task'
   Stop-Process -Name node -Force -ErrorAction SilentlyContinue
+  New-NetFirewallRule -DisplayName "JL拾遗 H5 API $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -ErrorAction SilentlyContinue | Out-Null
   Start-ScheduledTask -TaskName $TaskName
   Start-Sleep -Seconds 3
 
@@ -97,11 +98,11 @@ if (-not (Test-Path '.env')) {
   throw "Missing $InstallDir\.env. Run scripts/windows-ecs-deploy.ps1 first, or create .env with server runtime variables."
 }
 
-$Port = Read-DotEnvValue '.env' 'PORT' $DesiredPublicPort
-if ($Port -ne $DesiredPublicPort) {
-  Write-Host "Updating .env PORT from $Port to $DesiredPublicPort for the public ECS site." -ForegroundColor Yellow
-  Set-DotEnvValue '.env' 'PORT' $DesiredPublicPort
-  $Port = $DesiredPublicPort
+$Port = Read-DotEnvValue '.env' 'PORT' $DesiredApiPort
+if ($Port -ne $DesiredApiPort) {
+  Write-Host "Updating .env PORT from $Port to $DesiredApiPort for the Node upload API." -ForegroundColor Yellow
+  Set-DotEnvValue '.env' 'PORT' $DesiredApiPort
+  $Port = $DesiredApiPort
 }
 
 Write-Section 'Checking latest code'
@@ -118,7 +119,7 @@ if ($CurrentCommit -eq $RemoteCommit) {
     Write-Host 'App health check failed. Restarting app on the configured public port.' -ForegroundColor Yellow
     Restart-App $Port $TaskName
   }
-  Write-Host "`nUpdate finished. Open: http://<ECS_PUBLIC_IP>:$Port/" -ForegroundColor Green
+  Write-Host "`nUpdate finished. Open page: http://<ECS_PUBLIC_IP>:$PublicPagePort/ ; upload API: http://<ECS_PUBLIC_IP>:$Port/api/uploads/images" -ForegroundColor Green
   exit 0
 }
 
@@ -140,4 +141,4 @@ npm run build
 Sync-PublicMirror $InstallDir $PublicMirrorDir
 
 Restart-App $Port $TaskName
-Write-Host "`nUpdate finished. Open: http://<ECS_PUBLIC_IP>:$Port/" -ForegroundColor Green
+Write-Host "`nUpdate finished. Open page: http://<ECS_PUBLIC_IP>:$PublicPagePort/ ; upload API: http://<ECS_PUBLIC_IP>:$Port/api/uploads/images" -ForegroundColor Green

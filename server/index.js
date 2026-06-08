@@ -24,9 +24,7 @@ const upload = multer({
 const port = Number(process.env.PORT || 3000);
 const corsOrigin = process.env.CORS_ORIGIN;
 
-if (corsOrigin) {
-  app.use(cors({ origin: corsOrigin }));
-}
+app.use(cors(corsOrigin ? { origin: corsOrigin } : undefined));
 
 app.use(express.json());
 
