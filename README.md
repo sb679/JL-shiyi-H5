@@ -53,11 +53,17 @@ npm run lint
 - 本地演示登录
 - 本地模拟成交确认、评价、举报
 
+## 安全配置
+
+真实 OSS AccessKey、ECS 密码、数据库密码等隐私信息不能写入源码或提交到 GitHub。配置规则见 [SECURITY.md](SECURITY.md)。
+
 ## 图片上传说明
 
-现在的“选择本地图片”支持一次选择多张，前端不设置照片数量上限。它只是在浏览器里读取图片并立即预览，不会上传到云端，也不会永久保存。刷新页面后，本地状态会丢失。
+“选择本地图片”支持一次选择多张，前端不设置照片数量上限。生产环境会通过后端接口 `POST /api/uploads/images` 上传到阿里云 OSS，并把 OSS 返回的图片 URL 放入书籍图片列表。
 
-正式上线时需要接入对象存储。你已经开通阿里云 OSS，本项目已新增后端上传接口 `POST /api/uploads/images`：
+本地开发时，如果只启动 `npm run dev` 而没有启动后端服务，图片上传会失败；需要另开一个终端运行 `npm start`，或部署到 ECS 后通过同一个 Node 服务访问。
+
+本项目已新增后端上传接口 `POST /api/uploads/images`：
 
 1. 后端保存 OSS `AccessKeyId` / `AccessKeySecret` / Bucket / Region。
 2. 前端把图片提交到后端接口 `POST /api/uploads/images`。
@@ -124,22 +130,22 @@ npm start
 
 `npm start` 会启动 `server/index.js`，同时提供静态 H5 页面和 `/api/uploads/images` 上传接口。
 
-你的 ECS 公网 IP 是：
+把服务部署到 ECS 后，公网 IP 访问形式是：
 
 ```text
-47.99.71.207
+<ECS_PUBLIC_IP>
 ```
 
 如果后端直接监听 `3000` 且安全组放行 `3000`，访问地址是：
 
 ```text
-http://47.99.71.207:3000/
+http://<ECS_PUBLIC_IP>:3000/
 ```
 
 如果使用 Nginx 把 `80` 端口反向代理到 `3000`，访问地址是：
 
 ```text
-http://47.99.71.207/
+http://<ECS_PUBLIC_IP>/
 ```
 
 单页应用需要把未知路径回退到 `index.html`。本项目的 Node 服务已经处理了这个回退。
