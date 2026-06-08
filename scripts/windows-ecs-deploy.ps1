@@ -103,8 +103,8 @@ $Principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
 
 Write-Section 'Starting server now'
-Stop-Process -Name nginx -ErrorAction SilentlyContinue
-Stop-Process -Name node -ErrorAction SilentlyContinue
+Stop-Process -Name nginx -Force -ErrorAction SilentlyContinue
+Stop-Process -Name node -Force -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 3
 

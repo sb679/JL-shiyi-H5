@@ -16,13 +16,17 @@ function Read-DotEnvValue($Path, $Name, $DefaultValue) {
 
 function Restart-App($Port, $TaskName) {
   Write-Section 'Restarting server task'
-  Stop-Process -Name nginx -ErrorAction SilentlyContinue
-  Stop-Process -Name node -ErrorAction SilentlyContinue
+  Stop-Process -Name nginx -Force -ErrorAction SilentlyContinue
+  Stop-Process -Name node -Force -ErrorAction SilentlyContinue
   Start-ScheduledTask -TaskName $TaskName
   Start-Sleep -Seconds 3
 
   Write-Section 'Health check'
-  Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
+  try {
+    Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
+  } catch {
+    Write-Host "Node health check failed. Static wwwroot mirror may still be updated." -ForegroundColor Yellow
+  }
 }
 
 function Test-AppHealth($Port) {
