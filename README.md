@@ -96,7 +96,7 @@ VITE_OSS_PUBLIC_BASE_URL=https://your-bucket.oss-cn-hangzhou.aliyuncs.com
 后端需要在 ECS 上配置这些变量：
 
 ```env
-PORT=3000
+PORT=8080
 OSS_REGION=oss-cn-hangzhou
 OSS_BUCKET=你的Bucket名称
 OSS_ACCESS_KEY_ID=你的AccessKeyId
@@ -149,13 +149,13 @@ npm start
 <ECS_PUBLIC_IP>
 ```
 
-如果后端直接监听 `3000` 且安全组放行 `3000`，访问地址是：
+如果后端直接监听 `8080` 且安全组放行 `8080`，访问地址是：
 
 ```text
-http://<ECS_PUBLIC_IP>:3000/
+http://<ECS_PUBLIC_IP>:8080/
 ```
 
-如果使用 Nginx 把 `80` 端口反向代理到 `3000`，访问地址是：
+如果使用 Nginx 把 `80` 端口反向代理到 `8080`，访问地址是：
 
 ```text
 http://<ECS_PUBLIC_IP>/
@@ -173,13 +173,17 @@ powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.c
 
 脚本会提示输入 OSS 配置。真实 AccessKey 只会写入服务器本地 `C:\jl-shiyi-h5\.env`，不会提交到 GitHub。
 
+脚本也会提示输入 `PORT`，直接回车会使用默认端口 `8080`。
+
 脚本完成后，应用会运行在：
 
 ```text
-http://<ECS_PUBLIC_IP>:3000/
+http://<ECS_PUBLIC_IP>:8080/
 ```
 
-如果打不开，需要在阿里云安全组中放行入方向 TCP `3000` 端口，或后续配置 Nginx/IIS 反向代理到 `3000`。
+如果打不开，需要在阿里云安全组中放行入方向 TCP `8080` 端口，或后续配置 Nginx/IIS 反向代理到 `8080`。
+
+注意：`http://127.0.0.1:5173/` 或 `http://127.0.0.1:5174/` 是本机开发地址，只能在本机访问；ECS 上线地址需要打开 `http://<ECS_PUBLIC_IP>:8080/`。
 
 ### 更新代码到 ECS
 

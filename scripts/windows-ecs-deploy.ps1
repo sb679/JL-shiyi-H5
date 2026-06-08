@@ -45,9 +45,13 @@ $OssPublicBaseUrl = Read-Host 'OSS_PUBLIC_BASE_URL, press Enter to auto-generate
 if ([string]::IsNullOrWhiteSpace($OssPublicBaseUrl)) {
   $OssPublicBaseUrl = "https://$OssBucket.$OssRegion.aliyuncs.com"
 }
+$Port = Read-Host 'PORT, press Enter to use 8080'
+if ([string]::IsNullOrWhiteSpace($Port)) {
+  $Port = '8080'
+}
 
 $EnvContent = @"
-PORT=3000
+PORT=$Port
 OSS_REGION=$OssRegion
 OSS_BUCKET=$OssBucket
 OSS_ACCESS_KEY_ID=$OssAccessKeyId
@@ -63,7 +67,7 @@ npm ci
 npm run build
 
 Write-Section 'Configuring firewall'
-New-NetFirewallRule -DisplayName 'JL拾遗 H5 3000' -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+New-NetFirewallRule -DisplayName "JL拾遗 H5 $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
 Write-Section 'Registering startup task'
 $Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\scripts\start-server.ps1`""
@@ -77,8 +81,8 @@ Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 3
 
 try {
-  Invoke-RestMethod 'http://127.0.0.1:3000/api/health' | Out-Host
-  Write-Host "`nDeployment finished. Open: http://<ECS_PUBLIC_IP>:3000/" -ForegroundColor Green
+  Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
+  Write-Host "`nDeployment finished. Open: http://<ECS_PUBLIC_IP>:$Port/" -ForegroundColor Green
 } catch {
   Write-Host "Server task was created, but health check failed. Check Task Scheduler and logs." -ForegroundColor Yellow
   throw
