@@ -52,6 +52,7 @@ Write-Section 'Building app'
 npm run build
 
 Write-Section 'Restarting server task'
+Stop-Process -Name nginx -ErrorAction SilentlyContinue
 Stop-Process -Name node -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 3

@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$TaskName = 'JL拾遗 H5 Auto Update'
+$TaskName = 'JL-Shiyi-H5-Auto-Update'
 $IntervalMinutes = 5
 $UpdateScriptUrl = 'https://raw.githubusercontent.com/sb679/JL-shiyi-H5/main/scripts/windows-ecs-update.ps1'
 $LocalScriptPath = '$env:TEMP\jl-shiyi-update.ps1'
