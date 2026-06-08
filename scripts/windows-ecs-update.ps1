@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $InstallDir = 'C:\jl-shiyi-h5'
+$PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
 
 function Write-Section($Text) {
@@ -31,6 +32,35 @@ function Test-AppHealth($Port) {
   } catch {
     return $false
   }
+}
+
+function Sync-PublicMirror($InstallDir, $PublicMirrorDir) {
+  if (-not (Test-Path $PublicMirrorDir)) {
+    return
+  }
+
+  Write-Section 'Syncing public wwwroot mirror'
+  $SourceDist = Join-Path $InstallDir 'dist'
+  $TargetDist = Join-Path $PublicMirrorDir 'dist'
+
+  if (-not (Test-Path $SourceDist)) {
+    throw "Build output not found: $SourceDist"
+  }
+
+  if (Test-Path $TargetDist) {
+    Remove-Item $TargetDist -Recurse -Force
+  }
+
+  New-Item -ItemType Directory -Path $TargetDist -Force | Out-Null
+  Copy-Item (Join-Path $SourceDist '*') $TargetDist -Recurse -Force
+  Copy-Item (Join-Path $SourceDist 'index.html') (Join-Path $PublicMirrorDir 'index.html') -Force
+  if (Test-Path (Join-Path $PublicMirrorDir 'assets')) {
+    Remove-Item (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
+  }
+  if (Test-Path (Join-Path $SourceDist 'assets')) {
+    Copy-Item (Join-Path $SourceDist 'assets') (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
+  }
+  Write-Host "Public mirror updated: $TargetDist" -ForegroundColor Green
 }
 
 if (-not (Test-Path $InstallDir)) {
@@ -75,6 +105,7 @@ if ((-not (Test-Path 'node_modules')) -or $OldLockHash -ne $NewLockHash) {
 
 Write-Section 'Building app'
 npm run build
+Sync-PublicMirror $InstallDir $PublicMirrorDir
 
 Restart-App $Port $TaskName
 Write-Host "`nUpdate finished. Open: http://<ECS_PUBLIC_IP>:$Port/" -ForegroundColor Green

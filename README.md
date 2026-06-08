@@ -200,6 +200,15 @@ powershell -ExecutionPolicy Bypass -File C:\jl-shiyi-h5\scripts\windows-ecs-upda
 
 更新脚本会保留服务器本地 `.env`，检查 GitHub 是否有新 commit。没有新代码会直接退出；有新代码才会拉取、构建并重启服务。只有依赖文件变化时才会重新 `npm ci`。
 
+Windows ECS 当前可能存在两份目录：
+
+```text
+C:\jl-shiyi-h5              # GitHub 拉取、安装依赖、构建的主目录
+C:\wwwroot\JL-shiyi-H5     # Nginx/IIS 可能正在对外服务的静态目录
+```
+
+更新脚本会以 `C:\jl-shiyi-h5` 为准构建，然后把 `dist` 同步到 `C:\wwwroot\JL-shiyi-H5`，避免公网页面仍显示旧版本。
+
 ### 开启自动同步
 
 想要更接近自动部署，可以在 ECS 上执行一次：

@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 $RepoUrl = 'https://github.com/sb679/JL-shiyi-H5.git'
 $InstallDir = 'C:\jl-shiyi-h5'
+$PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
 
 function Require-Command($Name, $InstallHint) {
@@ -19,6 +20,31 @@ function Read-Required($Prompt) {
 
 function Write-Section($Text) {
   Write-Host "`n== $Text ==" -ForegroundColor Cyan
+}
+
+function Sync-PublicMirror($InstallDir, $PublicMirrorDir) {
+  if (-not (Test-Path $PublicMirrorDir)) {
+    return
+  }
+
+  Write-Section 'Syncing public wwwroot mirror'
+  $SourceDist = Join-Path $InstallDir 'dist'
+  $TargetDist = Join-Path $PublicMirrorDir 'dist'
+
+  if (Test-Path $TargetDist) {
+    Remove-Item $TargetDist -Recurse -Force
+  }
+
+  New-Item -ItemType Directory -Path $TargetDist -Force | Out-Null
+  Copy-Item (Join-Path $SourceDist '*') $TargetDist -Recurse -Force
+  Copy-Item (Join-Path $SourceDist 'index.html') (Join-Path $PublicMirrorDir 'index.html') -Force
+  if (Test-Path (Join-Path $PublicMirrorDir 'assets')) {
+    Remove-Item (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
+  }
+  if (Test-Path (Join-Path $SourceDist 'assets')) {
+    Copy-Item (Join-Path $SourceDist 'assets') (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
+  }
+  Write-Host "Public mirror updated: $TargetDist" -ForegroundColor Green
 }
 
 Write-Section 'Checking tools'
@@ -65,6 +91,7 @@ Set-Content -Path (Join-Path $InstallDir '.env') -Value $EnvContent -Encoding UT
 Write-Section 'Installing dependencies and building app'
 npm ci
 npm run build
+Sync-PublicMirror $InstallDir $PublicMirrorDir
 
 Write-Section 'Configuring firewall'
 New-NetFirewallRule -DisplayName "JL拾遗 H5 $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -ErrorAction SilentlyContinue | Out-Null
