@@ -22,7 +22,7 @@ dist/
 在本地开发或 ECS 部署时，真实值只放在服务器本地 `.env` 或系统环境变量里：
 
 ```env
-PORT=3000
+PORT=8080
 OSS_REGION=oss-cn-hangzhou
 OSS_BUCKET=your-bucket-name
 OSS_ACCESS_KEY_ID=your-access-key-id

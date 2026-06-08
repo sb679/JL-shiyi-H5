@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $InstallDir = 'C:\jl-shiyi-h5'
 $PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
-$DesiredApiPort = '3000'
+$DesiredApiPort = '8080'
 $PublicPagePort = '8080'
 
 function Write-Section($Text) {

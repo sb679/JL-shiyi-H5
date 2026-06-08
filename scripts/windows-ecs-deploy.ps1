@@ -71,9 +71,9 @@ $OssPublicBaseUrl = Read-Host 'OSS_PUBLIC_BASE_URL, press Enter to auto-generate
 if ([string]::IsNullOrWhiteSpace($OssPublicBaseUrl)) {
   $OssPublicBaseUrl = "https://$OssBucket.$OssRegion.aliyuncs.com"
 }
-$Port = Read-Host 'Node API PORT, press Enter to use 3000'
+$Port = Read-Host 'Node/API/Web PORT, press Enter to use 8080'
 if ([string]::IsNullOrWhiteSpace($Port)) {
-  $Port = '3000'
+  $Port = '8080'
 }
 
 $EnvContent = @"

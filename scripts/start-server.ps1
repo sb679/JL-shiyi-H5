@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $ProjectDir = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectDir
 
-$env:PORT = if ($env:PORT) { $env:PORT } else { '3000' }
+$env:PORT = if ($env:PORT) { $env:PORT } else { '8080' }
 
 $NodePath = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $NodePath) {
