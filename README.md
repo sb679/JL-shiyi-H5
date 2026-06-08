@@ -60,7 +60,7 @@ Google Books API Key 属于前端可见配置，上线后建议在 Google Cloud 
 
 - 书城列表：搜索、分类筛选、校区/学院/专业叠加筛选、排序、响应式卡片
 - 书籍详情：联系方式隐私门槛、想买、留言、举报
-- 发布书籍：Google Books ISBN 查询、图片 URL、本地多图选择与预览
+- 发布书籍：Google Books ISBN 查询、图片 URL、本地多图选择与预览；除数量外，其余内容均可为空
 - 我的书籍：状态切换、下架操作
 - 个人资料编辑
 - 本地演示登录
@@ -209,6 +209,8 @@ powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.c
 ```
 
 它会创建 Windows 计划任务，每 5 分钟自动从 GitHub 检查一次更新。之后你在本地改代码并推送到 GitHub，ECS 会自动拉取、构建并重启服务。
+
+脚本创建计划任务后会立刻执行一次更新；后续即使 GitHub 没有新提交，也会检查服务健康状态，必要时停止 nginx 并重启 Node 服务接管 `8080`。
 
 更稳的长期方案是 GitHub Actions + 自托管 Runner，但当前阶段用计划任务已经能避免手动复制粘贴源码。
 

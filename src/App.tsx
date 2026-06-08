@@ -24,6 +24,9 @@ import type { AppData, Book, BookCategory, BookCondition, BookStatus, Evaluation
 const queryClient = new QueryClient();
 const GOOGLE_BOOKS_API_KEY = ((import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined) || '').trim();
 const UPLOAD_ENDPOINT = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '/api/uploads/images';
+const DEFAULT_BOOK_TITLE = '未填写书名';
+const DEFAULT_BOOK_AUTHOR = '未填写作者';
+const DEFAULT_BOOK_IMAGE_URL = 'https://placehold.co/900x1200?text=JL%E6%8B%BE%E9%81%97';
 const CHINESE_ONLY_PATTERN = /^[\u4e00-\u9fff]*$/;
 const locationFieldLabels = {
   campus: '校区',
@@ -180,12 +183,12 @@ function useAppState() {
     const book: Book = {
       id: createId('book'),
       sellerId: user.id,
-      title: draft.title.trim(),
-      author: draft.author.trim() || '未知作者',
+      title: draft.title.trim() || DEFAULT_BOOK_TITLE,
+      author: draft.author.trim() || DEFAULT_BOOK_AUTHOR,
       isbn: draft.isbn.trim() || undefined,
       category: draft.category,
-      images: draft.imageUrls.map((url, index) => ({ id: createId('img'), url, sortOrder: index })),
-      priceCents: Math.round(Number(draft.priceYuan) * 100),
+      images: (draft.imageUrls.map((url) => url.trim()).filter(Boolean).length > 0 ? draft.imageUrls.map((url) => url.trim()).filter(Boolean) : [DEFAULT_BOOK_IMAGE_URL]).map((url, index) => ({ id: createId('img'), url, sortOrder: index })),
+      priceCents: Math.round(Number(draft.priceYuan || 0) * 100),
       quantity: draft.quantity,
       condition: draft.condition,
       contact: draft.contact.trim(),
@@ -510,9 +513,8 @@ function PublishPage({ state }: { state: AppState }) {
     event.preventDefault();
     const imageUrls = draft.imageUrls.map((url) => url.trim()).filter(Boolean);
     const invalidLocation = hasInvalidLocationField(draft);
-    if (!draft.title || !draft.author || !draft.priceYuan || !draft.contact) { setNote('请填写书名、作者、价格和联系方式。'); return; }
+    if (!Number.isFinite(draft.quantity) || draft.quantity < 1) { setNote('请填写大于 0 的数量。'); return; }
     if (invalidLocation) { setNote(`${locationFieldLabels[invalidLocation]}只能输入中文。`); return; }
-    if (imageUrls.length === 0) { setNote('请至少添加一张书籍照片或图片链接。'); return; }
     navigate(`/books/${state.publishBook({ ...draft, imageUrls })}`);
   }
   return (

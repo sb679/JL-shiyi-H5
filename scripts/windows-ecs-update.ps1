@@ -13,6 +13,26 @@ function Read-DotEnvValue($Path, $Name, $DefaultValue) {
   return ($Line -replace "^$Name=", '').Trim()
 }
 
+function Restart-App($Port, $TaskName) {
+  Write-Section 'Restarting server task'
+  Stop-Process -Name nginx -ErrorAction SilentlyContinue
+  Stop-Process -Name node -ErrorAction SilentlyContinue
+  Start-ScheduledTask -TaskName $TaskName
+  Start-Sleep -Seconds 3
+
+  Write-Section 'Health check'
+  Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
+}
+
+function Test-AppHealth($Port) {
+  try {
+    $Result = Invoke-RestMethod "http://127.0.0.1:$Port/api/health" -TimeoutSec 5
+    return $Result.ok -eq $true
+  } catch {
+    return $false
+  }
+}
+
 if (-not (Test-Path $InstallDir)) {
   throw "Project directory not found: $InstallDir. Run scripts/windows-ecs-deploy.ps1 first."
 }
@@ -32,6 +52,11 @@ $RemoteCommit = git rev-parse origin/main
 
 if ($CurrentCommit -eq $RemoteCommit) {
   Write-Host 'Already up to date. No rebuild needed.' -ForegroundColor Green
+  if (-not (Test-AppHealth $Port)) {
+    Write-Host 'App health check failed. Restarting app on the configured public port.' -ForegroundColor Yellow
+    Restart-App $Port $TaskName
+  }
+  Write-Host "`nUpdate finished. Open: http://<ECS_PUBLIC_IP>:$Port/" -ForegroundColor Green
   exit 0
 }
 
@@ -51,12 +76,5 @@ if ((-not (Test-Path 'node_modules')) -or $OldLockHash -ne $NewLockHash) {
 Write-Section 'Building app'
 npm run build
 
-Write-Section 'Restarting server task'
-Stop-Process -Name nginx -ErrorAction SilentlyContinue
-Stop-Process -Name node -ErrorAction SilentlyContinue
-Start-ScheduledTask -TaskName $TaskName
-Start-Sleep -Seconds 3
-
-Write-Section 'Health check'
-Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
+Restart-App $Port $TaskName
 Write-Host "`nUpdate finished. Open: http://<ECS_PUBLIC_IP>:$Port/" -ForegroundColor Green
