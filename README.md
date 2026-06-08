@@ -165,6 +165,8 @@ http://<ECS_PUBLIC_IP>/
 
 ### Windows ECS 一键部署
 
+这个脚本只用于首次部署，或需要重新填写 OSS / 端口配置时使用。它会安装依赖、构建项目、写入服务器本地 `.env`、注册开机启动任务，所以会比普通更新慢。
+
 当前 ECS 只开放了远程桌面端口时，可以通过 Windows 远程桌面登录服务器，然后在服务器 PowerShell 中执行：
 
 ```powershell
@@ -187,7 +189,7 @@ http://<ECS_PUBLIC_IP>:8080/
 
 ### 更新代码到 ECS
 
-以后在本地更新代码后，同步流程是：
+日常更新不要再跑部署脚本，跑更新脚本即可。以后在本地更新代码后，同步流程是：
 
 1. 本地提交并推送到 GitHub。
 2. 登录 ECS，执行更新脚本。
@@ -196,16 +198,17 @@ http://<ECS_PUBLIC_IP>:8080/
 powershell -ExecutionPolicy Bypass -File C:\jl-shiyi-h5\scripts\windows-ecs-update.ps1
 ```
 
-更新脚本会保留服务器本地 `.env`，拉取 GitHub 最新代码，重新安装依赖、构建并重启服务。
+更新脚本会保留服务器本地 `.env`，检查 GitHub 是否有新 commit。没有新代码会直接退出；有新代码才会拉取、构建并重启服务。只有依赖文件变化时才会重新 `npm ci`。
 
-如果希望自动同步，可以在 ECS 上用计划任务定时执行更新脚本，例如每 5 分钟检查一次 GitHub：
+### 开启自动同步
+
+想要更接近自动部署，可以在 ECS 上执行一次：
 
 ```powershell
-$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\jl-shiyi-h5\scripts\windows-ecs-update.ps1'
-$Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
-$Principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
-Register-ScheduledTask -TaskName 'JL拾遗 H5 Auto Update' -Action $Action -Trigger $Trigger -Principal $Principal -Force
+powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/sb679/JL-shiyi-H5/main/scripts/windows-ecs-enable-auto-update.ps1 -OutFile $env:TEMP\jl-shiyi-enable-auto-update.ps1; & $env:TEMP\jl-shiyi-enable-auto-update.ps1"
 ```
+
+它会创建 Windows 计划任务，每 5 分钟自动从 GitHub 检查一次更新。之后你在本地改代码并推送到 GitHub，ECS 会自动拉取、构建并重启服务。
 
 更稳的长期方案是 GitHub Actions + 自托管 Runner，但当前阶段用计划任务已经能避免手动复制粘贴源码。
 

@@ -25,12 +25,30 @@ if (-not (Test-Path '.env')) {
 
 $Port = Read-DotEnvValue '.env' 'PORT' '8080'
 
-Write-Section 'Pulling latest code'
+Write-Section 'Checking latest code'
+$CurrentCommit = git rev-parse HEAD
 git fetch origin main
-git reset --hard origin/main
+$RemoteCommit = git rev-parse origin/main
 
-Write-Section 'Installing dependencies and building app'
-npm ci
+if ($CurrentCommit -eq $RemoteCommit) {
+  Write-Host 'Already up to date. No rebuild needed.' -ForegroundColor Green
+  exit 0
+}
+
+$OldLockHash = if (Test-Path 'package-lock.json') { (Get-FileHash 'package-lock.json' -Algorithm SHA256).Hash } else { '' }
+
+Write-Section 'Pulling latest code'
+git reset --hard origin/main
+$NewLockHash = if (Test-Path 'package-lock.json') { (Get-FileHash 'package-lock.json' -Algorithm SHA256).Hash } else { '' }
+
+if ((-not (Test-Path 'node_modules')) -or $OldLockHash -ne $NewLockHash) {
+  Write-Section 'Installing dependencies'
+  npm ci
+} else {
+  Write-Section 'Dependencies unchanged'
+}
+
+Write-Section 'Building app'
 npm run build
 
 Write-Section 'Restarting server task'
