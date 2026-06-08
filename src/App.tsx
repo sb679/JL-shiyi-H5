@@ -23,6 +23,7 @@ import type { AppData, Book, BookCategory, BookCondition, BookStatus, Evaluation
 
 const queryClient = new QueryClient();
 const GOOGLE_BOOKS_API_KEY = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined;
+const UPLOAD_ENDPOINT = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '/api/uploads/images';
 
 const categoryLabels: Record<BookCategory | 'all', string> = {
   all: '全部',
@@ -121,6 +122,18 @@ function classifyGoogleCategory(categories?: string[]): BookCategory {
 
 function normalizeGoogleImage(url?: string) {
   return url ? url.replace(/^http:/, 'https:') : undefined;
+}
+
+async function uploadImagesToOss(files: File[]) {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('images', file));
+  const response = await fetch(UPLOAD_ENDPOINT, {
+    method: 'POST',
+    body: formData,
+  });
+  const payload = await response.json().catch(() => ({})) as { images?: Array<{ url: string }>; error?: string };
+  if (!response.ok) throw new Error(payload.error || '图片上传失败，请稍后重试。');
+  return (payload.images || []).map((item) => item.url).filter(Boolean);
 }
 
 function useAppState() {
@@ -439,23 +452,21 @@ function PublishPage({ state }: { state: AppState }) {
       setIsbnLoading(false);
     }
   }
-  function handleLocalImages(event: ChangeEvent<HTMLInputElement>) {
+  async function handleLocalImages(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
     const imageFiles = files.filter((file) => file.type.startsWith('image/'));
     if (imageFiles.length !== files.length) setNote('已跳过非图片文件。');
-    imageFiles.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, reader.result as string] }));
-        }
-      };
-      reader.onerror = () => setNote('部分图片读取失败，请重试。');
-      reader.readAsDataURL(file);
-    });
     event.target.value = '';
-    setNote('图片已加入本地预览。当前版本不会上传到云端，刷新页面后本地状态会丢失。');
+    if (imageFiles.length === 0) return;
+    setNote('正在上传图片到阿里云 OSS...');
+    try {
+      const urls = await uploadImagesToOss(imageFiles);
+      setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, ...urls] }));
+      setNote(`已上传 ${urls.length} 张图片到 OSS。`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : '图片上传失败，请稍后重试。');
+    }
   }
   function updateImageUrl(index: number, value: string) {
     setDraft((current) => ({ ...current, imageUrls: current.imageUrls.map((url, itemIndex) => (itemIndex === index ? value : url)) }));
@@ -482,7 +493,7 @@ function PublishPage({ state }: { state: AppState }) {
       <div className="privacy-note"><ShieldCheck size={16} /> 联系方式只会在买家表达想买后展示。</div>
       <div className="image-tools"><label className="upload-button"><ImagePlus size={18} /> 选择本地图片<input multiple type="file" accept="image/*" onChange={handleLocalImages} /></label><button className="ghost-button" type="button" onClick={addImageUrl}>添加图片链接</button></div>
       <div className="image-list">{draft.imageUrls.map((url, index) => <div className="image-editor" key={`${index}-${url.slice(0, 24)}`}><img src={url || 'https://placehold.co/240x240?text=Book'} alt={`书籍图片 ${index + 1}`} /><label>图片 {index + 1}<input value={url.startsWith('data:') ? '已选择本地图片' : url} onChange={(event) => updateImageUrl(index, event.target.value)} disabled={url.startsWith('data:')} /></label><button className="text-danger" type="button" onClick={() => removeImage(index)}>删除</button></div>)}</div>
-      <div className="upload-preview"><ImagePlus size={18} /><span>照片数量不做前端上限限制。当前为本地预览；接入 OSS 后会改为真实上传并保存图片地址。</span></div>
+      <div className="upload-preview"><ImagePlus size={18} /><span>照片数量不做前端上限限制；选择本地图片后会上传到阿里云 OSS，并保存返回的图片地址。</span></div>
       <label>描述<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} placeholder="写明书况、笔记、缺页、交易地点偏好等" /></label><button className="primary-button full-width" type="submit">立即发布</button>
     </form></section>
   );

@@ -57,24 +57,37 @@ npm run lint
 
 现在的“选择本地图片”支持一次选择多张，前端不设置照片数量上限。它只是在浏览器里读取图片并立即预览，不会上传到云端，也不会永久保存。刷新页面后，本地状态会丢失。
 
-正式上线时需要接入对象存储。你已经开通阿里云 OSS，推荐流程是：
+正式上线时需要接入对象存储。你已经开通阿里云 OSS，本项目已新增后端上传接口 `POST /api/uploads/images`：
 
 1. 后端保存 OSS `AccessKeyId` / `AccessKeySecret` / Bucket / Region。
-2. 前端请求后端接口，例如 `POST /api/uploads/oss-policy`。
-3. 后端校验登录态后，签发短时有效的 OSS 上传策略或预签名 URL。
-4. 前端把图片直传到 OSS。
-5. 后端把最终图片 URL 保存到数据库的 `book_images` 表。
+2. 前端把图片提交到后端接口 `POST /api/uploads/images`。
+3. 后端把图片上传到 OSS，并返回公开图片 URL。
+4. 前端把返回的图片 URL 保存进当前书籍数据。
+5. 正式数据库接入后，后端再把最终图片 URL 保存到数据库的 `book_images` 表。
 
 不要把 OSS AccessKeySecret 写到 H5 前端代码里，否则任何访问网页的人都能看到。
 
 前端后续会用 `.env.local` 里的配置读取上传入口：
 
 ```env
-VITE_UPLOAD_POLICY_ENDPOINT=/api/uploads/oss-policy
+VITE_UPLOAD_ENDPOINT=/api/uploads/images
 VITE_OSS_PUBLIC_BASE_URL=https://your-bucket.oss-cn-hangzhou.aliyuncs.com
 ```
 
-目前还没有后端签名接口，所以只能做本地预览。
+后端需要在 ECS 上配置这些变量：
+
+```env
+PORT=3000
+OSS_REGION=oss-cn-hangzhou
+OSS_BUCKET=你的Bucket名称
+OSS_ACCESS_KEY_ID=你的AccessKeyId
+OSS_ACCESS_KEY_SECRET=你的AccessKeySecret
+OSS_PUBLIC_BASE_URL=https://你的Bucket名称.oss-cn-hangzhou.aliyuncs.com
+UPLOAD_MAX_FILE_SIZE=8388608
+UPLOAD_MAX_FILES=30
+```
+
+不要把真实 `.env` 提交到 Git。
 
 ## 登录和数据保存说明
 
@@ -106,9 +119,30 @@ VITE_OSS_PUBLIC_BASE_URL=https://your-bucket.oss-cn-hangzhou.aliyuncs.com
 
 ```bash
 npm run build
+npm start
 ```
 
-`dist/` 可以部署到 Nginx、Caddy、对象存储 + CDN，或任意静态站点服务。由于这是单页应用，服务器需要把未知路径回退到 `index.html`。
+`npm start` 会启动 `server/index.js`，同时提供静态 H5 页面和 `/api/uploads/images` 上传接口。
+
+你的 ECS 公网 IP 是：
+
+```text
+47.99.71.207
+```
+
+如果后端直接监听 `3000` 且安全组放行 `3000`，访问地址是：
+
+```text
+http://47.99.71.207:3000/
+```
+
+如果使用 Nginx 把 `80` 端口反向代理到 `3000`，访问地址是：
+
+```text
+http://47.99.71.207/
+```
+
+单页应用需要把未知路径回退到 `index.html`。本项目的 Node 服务已经处理了这个回退。
 
 ## Git 使用建议
 
