@@ -22,8 +22,15 @@ import { currentUserSeed, seedData } from './mockData';
 import type { AppData, Book, BookCategory, BookCondition, BookStatus, Evaluation, User } from './types';
 
 const queryClient = new QueryClient();
-const GOOGLE_BOOKS_API_KEY = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined;
+const GOOGLE_BOOKS_API_KEY = ((import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined) || '').trim();
 const UPLOAD_ENDPOINT = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '/api/uploads/images';
+const CHINESE_ONLY_PATTERN = /^[\u4e00-\u9fff]*$/;
+const locationFieldLabels = {
+  campus: '校区',
+  department: '学部',
+  college: '学院',
+  major: '专业',
+} as const;
 
 const categoryLabels: Record<BookCategory | 'all', string> = {
   all: '全部',
@@ -63,6 +70,7 @@ type PublishDraft = {
   contact: string;
   description: string;
   campus: string;
+  department: string;
   college: string;
   major: string;
   imageUrls: string[];
@@ -124,6 +132,18 @@ function normalizeGoogleImage(url?: string) {
   return url ? url.replace(/^http:/, 'https:') : undefined;
 }
 
+function keepChineseOnly(value: string) {
+  return Array.from(value).filter((char) => CHINESE_ONLY_PATTERN.test(char)).join('');
+}
+
+function hasInvalidLocationField(values: Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>) {
+  return (Object.keys(locationFieldLabels) as Array<keyof typeof locationFieldLabels>).find((key) => !CHINESE_ONLY_PATTERN.test(values[key].trim()));
+}
+
+function locationPath(values: { campus?: string; department?: string; college?: string; major?: string }) {
+  return [values.campus, values.department, values.college, values.major].filter(Boolean).join(' / ');
+}
+
 async function uploadImagesToOss(files: File[]) {
   const formData = new FormData();
   files.forEach((file) => formData.append('images', file));
@@ -171,9 +191,10 @@ function useAppState() {
       contact: draft.contact.trim(),
       contactType: contactType(draft.contact),
       description: draft.description.trim(),
-      campus: draft.campus,
-      college: draft.college,
-      major: draft.major,
+      campus: draft.campus.trim(),
+      department: draft.department.trim(),
+      college: draft.college.trim(),
+      major: draft.major.trim(),
       status: 'available',
       createdAt: now,
       updatedAt: now,
@@ -297,27 +318,31 @@ function MallPage({ state }: { state: AppState }) {
   const [category, setCategory] = useState<BookCategory | 'all'>('all');
   const [sort, setSort] = useState('latest');
   const [campus, setCampus] = useState('all');
+  const [department, setDepartment] = useState('all');
   const [college, setCollege] = useState('all');
   const [major, setMajor] = useState('all');
   const locationOptions = useMemo(() => {
     const campuses = Array.from(new Set(state.data.books.map((book) => book.campus).filter(Boolean))) as string[];
-    const colleges = Array.from(new Set(state.data.books.filter((book) => campus === 'all' || book.campus === campus).map((book) => book.college).filter(Boolean))) as string[];
-    const majors = Array.from(new Set(state.data.books.filter((book) => (campus === 'all' || book.campus === campus) && (college === 'all' || book.college === college)).map((book) => book.major).filter(Boolean))) as string[];
-    return { campuses, colleges, majors };
-  }, [campus, college, state.data.books]);
+    const departments = Array.from(new Set(state.data.books.filter((book) => campus === 'all' || book.campus === campus).map((book) => book.department).filter(Boolean))) as string[];
+    const colleges = Array.from(new Set(state.data.books.filter((book) => (campus === 'all' || book.campus === campus) && (department === 'all' || book.department === department)).map((book) => book.college).filter(Boolean))) as string[];
+    const majors = Array.from(new Set(state.data.books.filter((book) => (campus === 'all' || book.campus === campus) && (department === 'all' || book.department === department) && (college === 'all' || book.college === college)).map((book) => book.major).filter(Boolean))) as string[];
+    return { campuses, departments, colleges, majors };
+  }, [campus, department, college, state.data.books]);
   const books = useMemo(() => {
     const q = keyword.trim().toLowerCase();
     return state.data.books
       .filter((book) => book.status === 'available' || book.status === 'reserved')
       .filter((book) => category === 'all' || book.category === category)
       .filter((book) => campus === 'all' || book.campus === campus)
+      .filter((book) => department === 'all' || book.department === department)
       .filter((book) => college === 'all' || book.college === college)
       .filter((book) => major === 'all' || book.major === major)
       .filter((book) => !q || [book.title, book.author, book.isbn].some((value) => value?.toLowerCase().includes(q)))
       .sort((a, b) => (sort === 'price' ? a.priceCents - b.priceCents : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-  }, [campus, category, college, keyword, major, sort, state.data.books]);
+  }, [campus, category, department, college, keyword, major, sort, state.data.books]);
   function clearLocation() {
     setCampus('all');
+    setDepartment('all');
     setCollege('all');
     setMajor('all');
   }
@@ -329,14 +354,15 @@ function MallPage({ state }: { state: AppState }) {
         <div className="filter-row"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序方式"><option value="latest">最新发布</option><option value="price">价格最低</option></select></div>
         <div className="segmented">{(Object.keys(categoryLabels) as Array<BookCategory | 'all'>).map((key) => <button key={key} className={category === key ? 'active' : ''} onClick={() => setCategory(key)} type="button">{categoryLabels[key]}</button>)}</div>
         <div className="location-filters">
-          <select value={campus} onChange={(event) => { setCampus(event.target.value); setCollege('all'); setMajor('all'); }} aria-label="校区筛选"><option value="all">全部校区</option>{locationOptions.campuses.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+          <select value={campus} onChange={(event) => { setCampus(event.target.value); setDepartment('all'); setCollege('all'); setMajor('all'); }} aria-label="校区筛选"><option value="all">全部校区</option>{locationOptions.campuses.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+          <select value={department} onChange={(event) => { setDepartment(event.target.value); setCollege('all'); setMajor('all'); }} aria-label="学部筛选"><option value="all">全部学部</option>{locationOptions.departments.map((item) => <option key={item} value={item}>{item}</option>)}</select>
           <select value={college} onChange={(event) => { setCollege(event.target.value); setMajor('all'); }} aria-label="学院筛选"><option value="all">全部学院</option>{locationOptions.colleges.map((item) => <option key={item} value={item}>{item}</option>)}</select>
           <select value={major} onChange={(event) => setMajor(event.target.value)} aria-label="专业筛选"><option value="all">全部专业</option>{locationOptions.majors.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-          <button className="ghost-button" type="button" onClick={clearLocation}>清空校院筛选</button>
+          <button className="ghost-button" type="button" onClick={clearLocation}>清空校区筛选</button>
         </div>
       </div>
       <div className="book-grid">{books.map((book) => <BookCard key={book.id} book={book} state={state} />)}</div>
-      {books.length === 0 && <EmptyState title="没有找到符合条件的书" text="换个关键词、分类、校区、学院或专业再试试。" />}
+      {books.length === 0 && <EmptyState title="没有找到符合条件的书" text="换个关键词、分类、校区、学部、学院或专业再试试。" />}
     </section>
   );
 }
@@ -349,7 +375,7 @@ function BookCard({ book, state, mine, onRemove }: { book: Book; state: AppState
     <article className="book-card">
       <Link to={`/books/${book.id}`} className="book-card-main">
         <div className="book-cover-wrap"><img src={book.images[0]?.url} alt={book.title} />{extraImages > 0 && <span className="image-count">+{extraImages}</span>}</div>
-        <div className="book-card-body"><div className="card-title-line"><h2>{book.title}</h2><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span></div><p>{book.author}</p><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span>{book.campus && <span>{book.campus}</span>}</div><div className="card-meta"><strong>{formatPrice(book.priceCents)}</strong><span>{count} 人想买</span><span>{mine ? formatDate(book.updatedAt) : maskName(seller?.nickname || '同学')}</span></div>{book.lastMessageAt && <div className="message-hint">最近留言 {formatDate(book.lastMessageAt)}</div>}</div>
+        <div className="book-card-body"><div className="card-title-line"><h2>{book.title}</h2><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span></div><p>{book.author}</p><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span>{book.campus && <span>{book.campus}</span>}{book.department && <span>{book.department}</span>}</div><div className="card-meta"><strong>{formatPrice(book.priceCents)}</strong><span>{count} 人想买</span><span>{mine ? formatDate(book.updatedAt) : maskName(seller?.nickname || '同学')}</span></div>{book.lastMessageAt && <div className="message-hint">最近留言 {formatDate(book.lastMessageAt)}</div>}</div>
       </Link>
       {onRemove && <button className="text-danger card-action" onClick={onRemove} type="button"><Trash2 size={16} /> 下架</button>}
     </article>
@@ -401,7 +427,7 @@ function DetailPage({ state }: { state: AppState }) {
       {notice && <div className="toast">{notice}<button onClick={() => setNotice('')} type="button">关闭</button></div>}
       <div className="detail-media surface-panel"><img src={currentImage} alt={book.title} />{book.images.length > 1 && <div className="thumb-row">{book.images.map((image, index) => <button className={selectedImage === index ? 'active' : ''} key={image.id} onClick={() => setSelectedImage(index)} type="button"><img src={image.url} alt={`${book.title} 图片 ${index + 1}`} /></button>)}</div>}</div>
       <div className="detail-main page-stack">
-        <section className="surface-panel detail-summary"><div className="card-title-line"><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span><span className="subtle">{formatDate(book.createdAt)}</span></div><h1>{book.title}</h1><p className="lead-text">{book.author}{book.isbn ? ` · ISBN ${book.isbn}` : ''}</p><div className="price-line">{formatPrice(book.priceCents)}</div><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span><span>{interests.length} 人想买</span></div><p className="book-description">{book.description}</p><div className="seller-box"><CircleUserRound size={32} /><div><strong>{seller?.nickname || '同学'}</strong><span>{[book.campus, book.college, book.major].filter(Boolean).join(' / ')}</span></div></div></section>
+        <section className="surface-panel detail-summary"><div className="card-title-line"><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span><span className="subtle">{formatDate(book.createdAt)}</span></div><h1>{book.title}</h1><p className="lead-text">{book.author}{book.isbn ? ` · ISBN ${book.isbn}` : ''}</p><div className="price-line">{formatPrice(book.priceCents)}</div><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span><span>{interests.length} 人想买</span></div><p className="book-description">{book.description}</p><div className="seller-box"><CircleUserRound size={32} /><div><strong>{seller?.nickname || '同学'}</strong><span>{locationPath(book)}</span></div></div></section>
         <section className="surface-panel action-panel"><h2>交易操作</h2>{user && !isOwner && !hasInterest && book.status === 'available' && <button className="primary-button full-width" onClick={() => { run(() => state.expressInterest(book), '已记录想买，联系方式已解锁'); setShowContact(true); }} type="button"><Check size={18} /> 我想买</button>}{user && !isOwner && hasInterest && <button className="secondary-button full-width" onClick={() => setShowContact(true)} type="button"><ShieldCheck size={18} /> 查看联系方式</button>}{!user && <Link className="primary-button full-width" to="/login"><LogIn size={18} /> 登录后联系卖家</Link>}{isOwner && book.status !== 'sold' && interests.map((interest) => <button key={interest.id} className="secondary-button" onClick={() => run(() => state.confirmSold(book, interest.buyerId), '已确认成交')} type="button">确认卖给 {state.userById(interest.buyerId)?.nickname || '买家'}</button>)}{(showContact || isOwner) && user && (hasInterest || isOwner) && <div className="contact-box"><ShieldCheck size={18} /><div><span>已授权查看联系方式</span><strong>{book.contact}</strong></div></div>}</section>
         {(isOwner || hasInterest) && <section className="surface-panel message-panel"><h2>留言沟通</h2><div className="message-list">{messages.map((item) => <div key={item.id} className={`message-bubble ${item.fromUserId === user?.id ? 'mine' : ''}`}><p>{item.content}</p><span>{formatDate(item.createdAt)}</span></div>)}</div>{book.status !== 'sold' && <form className="inline-form" onSubmit={handleMessage}><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="询问书况、交易地点或时间" /><button className="icon-button solid" type="submit" aria-label="发送留言"><Send size={18} /></button></form>}</section>}
         <section className="surface-panel review-panel"><h2>交易评价</h2>{evaluations.length === 0 && <p className="subtle">暂无评价。</p>}{evaluations.map((item) => <ReviewItem key={item.id} evaluation={item} />)}{canReview && <form className="review-form" onSubmit={handleReview}><label>评分<input type="range" min="1" max="5" value={rating} onChange={(event) => setRating(Number(event.target.value))} /><span>{rating} 星</span></label><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="写下这次交易体验" /><button className="secondary-button" type="submit"><Star size={16} /> 提交评价</button></form>}</section>
@@ -417,7 +443,7 @@ function ReviewItem({ evaluation }: { evaluation: Evaluation }) {
 
 function PublishPage({ state }: { state: AppState }) {
   const navigate = useNavigate();
-  const [draft, setDraft] = useState<PublishDraft>({ title: '', author: '', isbn: '', category: 'textbook', priceYuan: '', quantity: 1, condition: 'like_new', contact: '', description: '', campus: state.user?.campus || '', college: state.user?.college || '', major: state.user?.major || '', imageUrls: ['https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=900&q=80'] });
+  const [draft, setDraft] = useState<PublishDraft>({ title: '', author: '', isbn: '', category: 'textbook', priceYuan: '', quantity: 1, condition: 'like_new', contact: '', description: '', campus: state.user?.campus || '', department: state.user?.department || '', college: state.user?.college || '', major: state.user?.major || '', imageUrls: ['https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=900&q=80'] });
   const [note, setNote] = useState('');
   const [isbnLoading, setIsbnLoading] = useState(false);
   if (!state.user) return <LoginRequired />;
@@ -427,11 +453,13 @@ function PublishPage({ state }: { state: AppState }) {
   async function lookupIsbn() {
     const isbn = draft.isbn.trim();
     if (!isbn) { setNote('请先输入 ISBN。'); return; }
-    if (!GOOGLE_BOOKS_API_KEY) { setNote('尚未配置 Google Books API Key，请在 .env.local 中设置 VITE_GOOGLE_BOOKS_API_KEY。'); return; }
+    if (!GOOGLE_BOOKS_API_KEY) { setNote('尚未读取到 Google Books API Key。请确认 .env.local 位于 jl-shiyi-h5 根目录，并在保存后重启 npm run dev。'); return; }
     setIsbnLoading(true);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
     try {
       const params = new URLSearchParams({ q: `isbn:${isbn}`, key: GOOGLE_BOOKS_API_KEY });
-      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?${params.toString()}`);
+      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?${params.toString()}`, { signal: controller.signal });
       if (!response.ok) throw new Error('接口请求失败');
       const result = (await response.json()) as GoogleBooksResponse;
       const volume = result.items?.[0]?.volumeInfo;
@@ -449,6 +477,7 @@ function PublishPage({ state }: { state: AppState }) {
     } catch {
       setNote('ISBN 查询失败，请稍后重试或手动填写；系统不会自动添加默认内容。');
     } finally {
+      window.clearTimeout(timeoutId);
       setIsbnLoading(false);
     }
   }
@@ -480,7 +509,9 @@ function PublishPage({ state }: { state: AppState }) {
   function submit(event: FormEvent) {
     event.preventDefault();
     const imageUrls = draft.imageUrls.map((url) => url.trim()).filter(Boolean);
+    const invalidLocation = hasInvalidLocationField(draft);
     if (!draft.title || !draft.author || !draft.priceYuan || !draft.contact) { setNote('请填写书名、作者、价格和联系方式。'); return; }
+    if (invalidLocation) { setNote(`${locationFieldLabels[invalidLocation]}只能输入中文。`); return; }
     if (imageUrls.length === 0) { setNote('请至少添加一张书籍照片或图片链接。'); return; }
     navigate(`/books/${state.publishBook({ ...draft, imageUrls })}`);
   }
@@ -489,7 +520,8 @@ function PublishPage({ state }: { state: AppState }) {
       <div className="isbn-row"><label>ISBN<input value={draft.isbn} onChange={(event) => setField('isbn', event.target.value)} placeholder="输入 ISBN 后查询" /></label><button className="secondary-button" disabled={isbnLoading} type="button" onClick={lookupIsbn}><Search size={16} /> {isbnLoading ? '查询中' : '查询'}</button></div>
       <label>书名<input value={draft.title} onChange={(event) => setField('title', event.target.value)} /></label><label>作者<input value={draft.author} onChange={(event) => setField('author', event.target.value)} /></label>
       <div className="form-grid"><label>分类<select value={draft.category} onChange={(event) => setField('category', event.target.value as BookCategory)}>{(['textbook', 'novel', 'reference', 'other'] as BookCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}</select></label><label>新旧程度<select value={draft.condition} onChange={(event) => setField('condition', event.target.value as BookCondition)}>{(Object.keys(conditionLabels) as BookCondition[]).map((item) => <option key={item} value={item}>{conditionLabels[item]}</option>)}</select></label><label>价格<input type="number" min="0" step="0.5" value={draft.priceYuan} onChange={(event) => setField('priceYuan', event.target.value)} /></label><label>数量<input type="number" min="1" max="9" value={draft.quantity} onChange={(event) => setField('quantity', Number(event.target.value))} /></label></div>
-      <div className="form-grid"><label>校区<input value={draft.campus} onChange={(event) => setField('campus', event.target.value)} /></label><label>学院<input value={draft.college} onChange={(event) => setField('college', event.target.value)} /></label><label>专业<input value={draft.major} onChange={(event) => setField('major', event.target.value)} /></label><label>联系方式<input value={draft.contact} onChange={(event) => setField('contact', event.target.value)} placeholder="微信号、手机号或邮箱" /></label></div>
+      <div className="form-grid"><label>校区<input value={draft.campus} onChange={(event) => setField('campus', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label><label>学部<input value={draft.department} onChange={(event) => setField('department', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label><label>学院<input value={draft.college} onChange={(event) => setField('college', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label><label>专业<input value={draft.major} onChange={(event) => setField('major', keepChineseOnly(event.target.value))} placeholder="只能输入中文" /></label></div>
+      <label>联系方式<input value={draft.contact} onChange={(event) => setField('contact', event.target.value)} placeholder="微信号、手机号或邮箱" /></label>
       <div className="privacy-note"><ShieldCheck size={16} /> 联系方式只会在买家表达想买后展示。</div>
       <div className="image-tools"><label className="upload-button"><ImagePlus size={18} /> 选择本地图片<input multiple type="file" accept="image/*" onChange={handleLocalImages} /></label><button className="ghost-button" type="button" onClick={addImageUrl}>添加图片链接</button></div>
       <div className="image-list">{draft.imageUrls.map((url, index) => <div className="image-editor" key={`${index}-${url.slice(0, 24)}`}><img src={url || 'https://placehold.co/240x240?text=Book'} alt={`书籍图片 ${index + 1}`} /><label>图片 {index + 1}<input value={url.startsWith('data:') ? '已选择本地图片' : url} onChange={(event) => updateImageUrl(index, event.target.value)} disabled={url.startsWith('data:')} /></label><button className="text-danger" type="button" onClick={() => removeImage(index)}>删除</button></div>)}</div>
@@ -504,14 +536,14 @@ function MyBooksPage({ state }: { state: AppState }) {
   const [status, setStatus] = useState<BookStatus>('available');
   if (!state.user) return <LoginRequired />;
   const myBooks = state.data.books.filter((book) => book.sellerId === state.user?.id && book.status === status);
-  return <section className="page-stack"><div className="profile-panel surface-panel"><CircleUserRound size={44} /><div><h1>{state.user.nickname}</h1><p>{[state.user.campus, state.user.college, state.user.major].filter(Boolean).join(' / ')}</p></div><button className="secondary-button" onClick={() => navigate('/me/profile')} type="button">编辑资料</button></div><div className="segmented sticky-tabs">{(['available', 'sold', 'removed'] as BookStatus[]).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)} type="button">{statusLabels[item]}</button>)}</div><div className="book-grid">{myBooks.map((book) => <BookCard key={book.id} book={book} state={state} mine onRemove={book.status !== 'sold' ? () => state.removeBook(book) : undefined} />)}</div>{myBooks.length === 0 && <EmptyState title="这里还没有书" text="发布一本闲置书后会出现在这里。" />}</section>;
+  return <section className="page-stack"><div className="profile-panel surface-panel"><CircleUserRound size={44} /><div><h1>{state.user.nickname}</h1><p>{locationPath(state.user)}</p></div><button className="secondary-button" onClick={() => navigate('/me/profile')} type="button">编辑资料</button></div><div className="segmented sticky-tabs">{(['available', 'sold', 'removed'] as BookStatus[]).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)} type="button">{statusLabels[item]}</button>)}</div><div className="book-grid">{myBooks.map((book) => <BookCard key={book.id} book={book} state={state} mine onRemove={book.status !== 'sold' ? () => state.removeBook(book) : undefined} />)}</div>{myBooks.length === 0 && <EmptyState title="这里还没有书" text="发布一本闲置书后会出现在这里。" />}</section>;
 }
 
 function ProfilePage({ state }: { state: AppState }) {
   const navigate = useNavigate();
   const [draft, setDraft] = useState<User | null>(state.user);
   if (!draft) return <LoginRequired />;
-  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); state.updateUser(draft); navigate('/me/books'); }}><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input value={draft.campus || ''} onChange={(event) => setDraft({ ...draft, campus: event.target.value })} /></label><label>学院<input value={draft.college || ''} onChange={(event) => setDraft({ ...draft, college: event.target.value })} /></label><label>专业<input value={draft.major || ''} onChange={(event) => setDraft({ ...draft, major: event.target.value })} /></label><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
+  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); state.updateUser(draft); navigate('/me/books'); }}><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input value={draft.campus || ''} onChange={(event) => setDraft({ ...draft, campus: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学部<input value={draft.department || ''} onChange={(event) => setDraft({ ...draft, department: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学院<input value={draft.college || ''} onChange={(event) => setDraft({ ...draft, college: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>专业<input value={draft.major || ''} onChange={(event) => setDraft({ ...draft, major: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
 }
 
 function LoginPage({ state }: { state: AppState }) {

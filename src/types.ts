@@ -9,6 +9,7 @@ export type User = {
   nickname: string;
   avatarUrl?: string;
   campus?: string;
+  department?: string;
   college?: string;
   major?: string;
   role: UserRole;
@@ -35,6 +36,7 @@ export type Book = {
   contactType: 'wechat' | 'phone' | 'email' | 'other';
   description?: string;
   campus?: string;
+  department?: string;
   college?: string;
   major?: string;
   status: BookStatus;
@@ -87,9 +89,12 @@ export type Report = {
 export type CampusConfig = {
   campuses: Array<{
     name: string;
-    colleges: Array<{
+    departments: Array<{
       name: string;
-      majors: string[];
+      colleges: Array<{
+        name: string;
+        majors: string[];
+      }>;
     }>;
   }>;
 };

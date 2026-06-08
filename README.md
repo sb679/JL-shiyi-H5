@@ -28,6 +28,8 @@ cp .env.example .env.local
 
 然后把 `.env.local` 里的 `VITE_GOOGLE_BOOKS_API_KEY` 改成真实 key。不要把 `.env.local` 提交到 Git。
 
+修改 `.env.local` 后必须停止并重新运行 `npm run dev`，Vite 不会在运行中自动重新读取新的环境变量。
+
 Vite 默认访问地址通常是：
 
 ```text
@@ -42,6 +44,17 @@ npm run lint
 ```
 
 上线或接入后端前，建议保证以上两个命令都通过。
+
+## ISBN 查询排查
+
+如果页面提示“尚未读取到 Google Books API Key”，按顺序检查：
+
+1. `.env.local` 是否在 `jl-shiyi-h5` 项目根目录。
+2. 变量名是否完全是 `VITE_GOOGLE_BOOKS_API_KEY`。
+3. 保存 `.env.local` 后是否重启过 `npm run dev`。
+4. 是否从正确目录启动：`D:\xunlei\litterxunlei\JL拾遗\standards-template\jl-shiyi-h5`。
+
+Google Books API Key 属于前端可见配置，上线后建议在 Google Cloud 控制台限制 HTTP Referrer，只允许自己的域名使用。
 
 ## 当前已实现
 
@@ -167,6 +180,30 @@ http://<ECS_PUBLIC_IP>:3000/
 ```
 
 如果打不开，需要在阿里云安全组中放行入方向 TCP `3000` 端口，或后续配置 Nginx/IIS 反向代理到 `3000`。
+
+### 更新代码到 ECS
+
+以后在本地更新代码后，同步流程是：
+
+1. 本地提交并推送到 GitHub。
+2. 登录 ECS，执行更新脚本。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\jl-shiyi-h5\scripts\windows-ecs-update.ps1
+```
+
+更新脚本会保留服务器本地 `.env`，拉取 GitHub 最新代码，重新安装依赖、构建并重启服务。
+
+如果希望自动同步，可以在 ECS 上用计划任务定时执行更新脚本，例如每 5 分钟检查一次 GitHub：
+
+```powershell
+$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\jl-shiyi-h5\scripts\windows-ecs-update.ps1'
+$Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+$Principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+Register-ScheduledTask -TaskName 'JL拾遗 H5 Auto Update' -Action $Action -Trigger $Trigger -Principal $Principal -Force
+```
+
+更稳的长期方案是 GitHub Actions + 自托管 Runner，但当前阶段用计划任务已经能避免手动复制粘贴源码。
 
 ## Git 使用建议
 

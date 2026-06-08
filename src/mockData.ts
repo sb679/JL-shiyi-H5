@@ -4,23 +4,38 @@ export const campusConfig: CampusConfig = {
   campuses: [
     {
       name: '三江校区东园',
-      colleges: [
-        { name: '计算机学院', majors: ['软件工程', '计算机科学与技术'] },
-        { name: '数理学院', majors: ['信息与计算科学', '应用数学'] },
+      departments: [
+        {
+          name: '信息学部',
+          colleges: [
+            { name: '计算机学院', majors: ['软件工程', '计算机科学与技术'] },
+            { name: '数理学院', majors: ['信息与计算科学', '应用数学'] },
+          ],
+        },
       ],
     },
     {
       name: '三江校区西园',
-      colleges: [
-        { name: '外国语学院', majors: ['英语', '日语'] },
-        { name: '经济管理学院', majors: ['会计学', '市场营销'] },
+      departments: [
+        {
+          name: '人文经管学部',
+          colleges: [
+            { name: '外国语学院', majors: ['英语', '日语'] },
+            { name: '经济管理学院', majors: ['会计学', '市场营销'] },
+          ],
+        },
       ],
     },
     {
       name: '红旗校区',
-      colleges: [
-        { name: '材料学院', majors: ['材料科学与工程', '新能源材料'] },
-        { name: '机械学院', majors: ['机械设计制造', '车辆工程'] },
+      departments: [
+        {
+          name: '工程学部',
+          colleges: [
+            { name: '材料学院', majors: ['材料科学与工程', '新能源材料'] },
+            { name: '机械学院', majors: ['机械设计制造', '车辆工程'] },
+          ],
+        },
       ],
     },
   ],
@@ -31,6 +46,7 @@ export const currentUserSeed: User = {
   loginIdentifier: 'student@example.edu',
   nickname: '拾遗用户A9K2',
   campus: '三江校区东园',
+  department: '信息学部',
   college: '计算机学院',
   major: '软件工程',
   role: 'user',
@@ -39,9 +55,9 @@ export const currentUserSeed: User = {
 export const seedData: AppData = {
   users: [
     currentUserSeed,
-    { id: 'seller_1', loginIdentifier: 'lin@example.edu', nickname: '林同学', campus: '三江校区东园', college: '计算机学院', major: '软件工程', role: 'user' },
-    { id: 'seller_2', loginIdentifier: 'zhou@example.edu', nickname: '周同学', campus: '三江校区西园', college: '数理学院', major: '应用数学', role: 'user' },
-    { id: 'seller_3', loginIdentifier: 'he@example.edu', nickname: '何同学', campus: '红旗校区', college: '外国语学院', major: '英语', role: 'user' },
+    { id: 'seller_1', loginIdentifier: 'lin@example.edu', nickname: '林同学', campus: '三江校区东园', department: '信息学部', college: '计算机学院', major: '软件工程', role: 'user' },
+    { id: 'seller_2', loginIdentifier: 'zhou@example.edu', nickname: '周同学', campus: '三江校区东园', department: '信息学部', college: '数理学院', major: '应用数学', role: 'user' },
+    { id: 'seller_3', loginIdentifier: 'he@example.edu', nickname: '何同学', campus: '三江校区西园', department: '人文经管学部', college: '外国语学院', major: '英语', role: 'user' },
     { id: 'buyer_1', loginIdentifier: 'xu@example.edu', nickname: '许同学', role: 'user' },
     { id: 'buyer_2', loginIdentifier: 'chen@example.edu', nickname: '陈同学', role: 'user' },
   ],
@@ -61,6 +77,7 @@ export const seedData: AppData = {
       contactType: 'wechat',
       description: '第三版，封面轻微使用痕迹，前两章有铅笔笔记，适合计组和系统课程。',
       campus: '三江校区东园',
+      department: '信息学部',
       college: '计算机学院',
       major: '软件工程',
       status: 'available',
@@ -81,7 +98,8 @@ export const seedData: AppData = {
       contact: '13800001234',
       contactType: 'phone',
       description: '上下册一起出，有课堂重点标注，适合期末复习。',
-      campus: '三江校区西园',
+      campus: '三江校区东园',
+      department: '信息学部',
       college: '数理学院',
       major: '应用数学',
       status: 'available',
@@ -104,6 +122,7 @@ export const seedData: AppData = {
       contactType: 'wechat',
       description: '书页泛黄但不影响阅读，宿舍断舍离。',
       campus: '三江校区东园',
+      department: '信息学部',
       college: '计算机学院',
       major: '软件工程',
       status: 'available',
@@ -124,7 +143,8 @@ export const seedData: AppData = {
       contact: 'wxid_cet6_book',
       contactType: 'wechat',
       description: '全新未拆，买多了一本。',
-      campus: '红旗校区',
+      campus: '三江校区西园',
+      department: '人文经管学部',
       college: '外国语学院',
       major: '英语',
       status: 'sold',
