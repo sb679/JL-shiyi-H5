@@ -150,6 +150,24 @@ http://<ECS_PUBLIC_IP>/
 
 单页应用需要把未知路径回退到 `index.html`。本项目的 Node 服务已经处理了这个回退。
 
+### Windows ECS 一键部署
+
+当前 ECS 只开放了远程桌面端口时，可以通过 Windows 远程桌面登录服务器，然后在服务器 PowerShell 中执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/sb679/JL-shiyi-H5/main/scripts/windows-ecs-deploy.ps1 -OutFile $env:TEMP\jl-shiyi-deploy.ps1; & $env:TEMP\jl-shiyi-deploy.ps1"
+```
+
+脚本会提示输入 OSS 配置。真实 AccessKey 只会写入服务器本地 `C:\jl-shiyi-h5\.env`，不会提交到 GitHub。
+
+脚本完成后，应用会运行在：
+
+```text
+http://<ECS_PUBLIC_IP>:3000/
+```
+
+如果打不开，需要在阿里云安全组中放行入方向 TCP `3000` 端口，或后续配置 Nginx/IIS 反向代理到 `3000`。
+
 ## Git 使用建议
 
 本地代码用 Git 管理后，推荐流程是：
