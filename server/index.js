@@ -6,6 +6,20 @@ import multer from 'multer';
 import OSS from 'ali-oss';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import {
+  checkDatabase,
+  confirmSold,
+  expressInterest,
+  getState,
+  isDatabaseConfigured,
+  loginUser,
+  publishBook,
+  removeBook,
+  sendMessage,
+  submitEvaluation,
+  submitReport,
+  updateUser,
+} from './database.js';
 
 dotenv.config();
 
@@ -63,9 +77,79 @@ function extensionFromMime(mimeType) {
   return known[mimeType] || 'jpg';
 }
 
-app.get('/api/health', (_request, response) => {
-  response.json({ ok: true });
-});
+function currentUserId(request) {
+  return request.body?.userId || request.headers['x-user-id'];
+}
+
+function requireUserId(request) {
+  const userId = currentUserId(request);
+  if (!userId) throw Object.assign(new Error('请先登录'), { status: 401 });
+  return userId;
+}
+
+function asyncRoute(handler) {
+  return async (request, response, next) => {
+    try {
+      await handler(request, response);
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+app.get('/api/health', asyncRoute(async (_request, response) => {
+  const database = await checkDatabase().catch(() => ({ configured: isDatabaseConfigured(), ok: false }));
+  response.json({ ok: true, database });
+}));
+
+app.get('/api/state', asyncRoute(async (_request, response) => {
+  response.json(await getState());
+}));
+
+app.post('/api/login', asyncRoute(async (request, response) => {
+  response.json({ user: await loginUser(request.body?.identifier) });
+}));
+
+app.put('/api/users/:userId', asyncRoute(async (request, response) => {
+  if (requireUserId(request) !== request.params.userId) throw Object.assign(new Error('不能修改其他用户资料'), { status: 403 });
+  await updateUser({ ...request.body, id: request.params.userId });
+  response.json(await getState());
+}));
+
+app.post('/api/books', asyncRoute(async (request, response) => {
+  const bookId = await publishBook(requireUserId(request), request.body?.draft || {});
+  response.status(201).json({ bookId, state: await getState() });
+}));
+
+app.post('/api/books/:bookId/interests', asyncRoute(async (request, response) => {
+  await expressInterest(request.params.bookId, requireUserId(request));
+  response.json(await getState());
+}));
+
+app.post('/api/books/:bookId/confirm-sold', asyncRoute(async (request, response) => {
+  await confirmSold(request.params.bookId, requireUserId(request), request.body?.buyerId);
+  response.json(await getState());
+}));
+
+app.post('/api/books/:bookId/remove', asyncRoute(async (request, response) => {
+  await removeBook(request.params.bookId, requireUserId(request));
+  response.json(await getState());
+}));
+
+app.post('/api/books/:bookId/messages', asyncRoute(async (request, response) => {
+  await sendMessage(request.params.bookId, requireUserId(request), request.body?.content);
+  response.status(201).json(await getState());
+}));
+
+app.post('/api/books/:bookId/evaluations', asyncRoute(async (request, response) => {
+  await submitEvaluation(request.params.bookId, requireUserId(request), request.body?.rating, request.body?.comment, request.body?.tags);
+  response.status(201).json(await getState());
+}));
+
+app.post('/api/books/:bookId/reports', asyncRoute(async (request, response) => {
+  await submitReport(request.params.bookId, requireUserId(request), request.body?.reason, request.body?.detail);
+  response.status(201).json(await getState());
+}));
 
 app.post('/api/uploads/images', upload.array('images'), async (request, response) => {
   try {
@@ -99,6 +183,11 @@ app.post('/api/uploads/images', upload.array('images'), async (request, response
     console.error('OSS upload failed:', error instanceof Error ? error.message : error);
     response.status(500).json({ error: '图片上传失败，请稍后重试。' });
   }
+});
+
+app.use('/api', (error, _request, response, _next) => {
+  console.error('API failed:', error instanceof Error ? error.message : error);
+  response.status(error.status || 500).json({ error: error instanceof Error ? error.message : '服务暂时不可用，请稍后重试。' });
 });
 
 app.use(express.static(distDir));

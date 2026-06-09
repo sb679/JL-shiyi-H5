@@ -1,4 +1,4 @@
-import { ChangeEvent, CompositionEvent, FormEvent, useMemo, useState } from 'react';
+import { ChangeEvent, CompositionEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
@@ -25,9 +25,14 @@ const queryClient = new QueryClient();
 const GOOGLE_BOOKS_API_KEY = ((import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined) || '').trim();
 const configuredUploadEndpoint = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '';
 const UPLOAD_ENDPOINT = configuredUploadEndpoint || '/api/uploads/images';
+const API_TIMEOUT_MS = 10000;
+const SESSION_STORAGE_KEY = 'jl-shiyi-session-v1';
+const PUBLISH_DRAFT_STORAGE_KEY = 'jl-shiyi-publish-draft-v1';
+const LAST_LOCATION_STORAGE_KEY = 'jl-shiyi-last-location-v1';
 const DEFAULT_BOOK_TITLE = '未填写书名';
 const DEFAULT_BOOK_AUTHOR = '未填写作者';
 const CHINESE_ONLY_PATTERN = /^[\u4e00-\u9fff]*$/;
+const ACCOUNT_PATTERN = /^[A-Za-z0-9\u4e00-\u9fff]{1,60}$/;
 const locationFieldLabels = {
   campus: '校区',
   department: '学部',
@@ -94,6 +99,98 @@ type GoogleBooksResponse = {
     };
   }>;
 };
+
+type SavedSession = {
+  identifier: string;
+  user?: User;
+};
+
+type PublishLocation = Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>;
+
+function readStorage<T>(key: string) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? JSON.parse(value) as T : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage can be unavailable in private mode; the app still works without cache.
+  }
+}
+
+function removeStorage(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore cache cleanup failures.
+  }
+}
+
+function localUserId(identifier: string) {
+  let hash = 0;
+  for (const char of identifier) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+  return `local_${Math.abs(hash)}`;
+}
+
+function createLocalUser(identifier: string): User {
+  return {
+    ...currentUserSeed,
+    id: localUserId(identifier),
+    loginIdentifier: identifier,
+    nickname: identifier,
+  };
+}
+
+function validateAccount(identifier: string) {
+  if (!identifier) throw new Error('请输入账号');
+  if (!ACCOUNT_PATTERN.test(identifier)) throw new Error('账号只能使用中文、英文、数字，且不超过 60 个字符');
+}
+
+function createPublishDraft(user?: User | null): PublishDraft {
+  const location = readStorage<PublishLocation>(LAST_LOCATION_STORAGE_KEY);
+  return {
+    title: '',
+    author: '',
+    isbn: '',
+    category: 'textbook',
+    priceYuan: '',
+    quantity: 1,
+    condition: 'like_new',
+    contact: '',
+    description: '',
+    campus: location?.campus || user?.campus || '',
+    department: location?.department || user?.department || '',
+    college: location?.college || user?.college || '',
+    major: location?.major || user?.major || '',
+    imageUrls: [],
+  };
+}
+
+async function requestJson<T>(path: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+        ...init?.headers,
+      },
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error((payload as { error?: string }).error || '服务暂时不可用，请稍后重试。');
+    return payload as T;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
 
 function formatPrice(priceCents: number) {
   return `¥${(priceCents / 100).toFixed(priceCents % 100 === 0 ? 0 : 2)}`;
@@ -163,35 +260,114 @@ function readFileAsDataUrl(file: File) {
 async function uploadImagesToOss(files: File[]) {
   const formData = new FormData();
   files.forEach((file) => formData.append('images', file));
-  const response = await fetch(UPLOAD_ENDPOINT, {
-    method: 'POST',
-    body: formData,
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(UPLOAD_ENDPOINT, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch {
+    throw new Error('图片上传接口连接失败，请确认后端服务已启动，且 OSS 环境变量已配置。');
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
   const payload = await response.json().catch(() => ({})) as { images?: Array<{ url: string }>; error?: string };
   if (!response.ok) throw new Error(payload.error || '图片上传失败，请稍后重试。');
   return (payload.images || []).map((item) => item.url).filter(Boolean);
 }
 
 function useAppState() {
-  const [user, setUser] = useState<User | null>(currentUserSeed);
+  const [user, setUser] = useState<User | null>(() => readStorage<SavedSession>(SESSION_STORAGE_KEY)?.user || null);
   const [data, setData] = useState<AppData>(seedData);
+  const [remoteReady, setRemoteReady] = useState(false);
   const userById = (id?: string) => data.users.find((item) => item.id === id);
   const activeInterests = (bookId: string) => data.interests.filter((item) => item.bookId === bookId && item.status === 'active');
 
-  function login(identifier: string) {
-    setUser({ ...currentUserSeed, loginIdentifier: identifier });
+  useEffect(() => {
+    let alive = true;
+    async function loadRemoteState() {
+      const savedSession = readStorage<SavedSession>(SESSION_STORAGE_KEY);
+      try {
+        let nextData = await requestJson<AppData>('/api/state');
+        let nextUser: User | null = null;
+        if (savedSession?.identifier) {
+          const loginResult = await requestJson<{ user: User }>('/api/login', {
+            method: 'POST',
+            body: JSON.stringify({ identifier: savedSession.identifier }),
+          });
+          nextUser = loginResult.user;
+          nextData = await requestJson<AppData>('/api/state');
+          writeStorage(SESSION_STORAGE_KEY, { identifier: savedSession.identifier, user: nextUser });
+        }
+        if (!alive) return;
+        setUser(nextUser);
+        setData(nextData);
+        setRemoteReady(true);
+      } catch {
+        if (!alive) return;
+        setUser(savedSession?.user || null);
+        setRemoteReady(false);
+      }
+    }
+    loadRemoteState();
+    return () => { alive = false; };
+  }, []);
+
+  async function replaceWithRemoteState(nextDataPromise: Promise<AppData>) {
+    const nextData = await nextDataPromise;
+    setData(nextData);
   }
 
-  function updateUser(nextUser: User) {
-    setUser(nextUser);
+  async function login(identifier: string) {
+    const loginIdentifier = identifier.trim();
+    validateAccount(loginIdentifier);
+    if (remoteReady) {
+      const result = await requestJson<{ user: User }>('/api/login', { method: 'POST', body: JSON.stringify({ identifier: loginIdentifier }) });
+      const nextData = await requestJson<AppData>('/api/state');
+      setUser(result.user);
+      setData(nextData);
+      writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, user: result.user });
+      return;
+    }
+    const localUser = createLocalUser(loginIdentifier);
+    setUser(localUser);
     setData((current) => ({
       ...current,
-      users: current.users.map((item) => (item.id === nextUser.id ? nextUser : item)),
+      users: current.users.some((item) => item.id === localUser.id) ? current.users : [...current.users, localUser],
+    }));
+    writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, user: localUser });
+  }
+
+  async function updateUser(nextUser: User) {
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/users/${nextUser.id}`, { method: 'PUT', body: JSON.stringify({ ...nextUser, userId: nextUser.id }) }));
+      setUser(nextUser);
+      writeStorage(SESSION_STORAGE_KEY, { identifier: nextUser.loginIdentifier, user: nextUser });
+      return;
+    }
+    setUser(nextUser);
+    writeStorage(SESSION_STORAGE_KEY, { identifier: nextUser.loginIdentifier, user: nextUser });
+    setData((current) => ({
+      ...current,
+      users: current.users.some((item) => item.id === nextUser.id)
+        ? current.users.map((item) => (item.id === nextUser.id ? nextUser : item))
+        : [...current.users, nextUser],
     }));
   }
 
-  function publishBook(draft: PublishDraft) {
+  async function publishBook(draft: PublishDraft) {
     if (!user) throw new Error('请先登录');
+    if (remoteReady) {
+      const result = await requestJson<{ bookId: string; state: AppData }>('/api/books', {
+        method: 'POST',
+        body: JSON.stringify({ userId: user.id, draft }),
+      });
+      setData(result.state);
+      return result.bookId;
+    }
     const now = new Date().toISOString();
     const book: Book = {
       id: createId('book'),
@@ -219,8 +395,12 @@ function useAppState() {
     return book.id;
   }
 
-  function expressInterest(book: Book) {
+  async function expressInterest(book: Book) {
     if (!user) throw new Error('请先登录');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/interests`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }));
+      return;
+    }
     if (book.sellerId === user.id) throw new Error('不能购买自己发布的书籍');
     if (book.status !== 'available') throw new Error('这本书当前不可购买');
     if (data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id)) return;
@@ -232,8 +412,12 @@ function useAppState() {
     }));
   }
 
-  function confirmSold(book: Book, buyerId: string) {
+  async function confirmSold(book: Book, buyerId: string) {
     if (!user || book.sellerId !== user.id) throw new Error('只有卖家可以确认成交');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/confirm-sold`, { method: 'POST', body: JSON.stringify({ userId: user.id, buyerId }) }));
+      return;
+    }
     setData((current) => ({
       ...current,
       books: current.books.map((item) => (item.id === book.id ? { ...item, status: 'sold', buyerId, soldAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : item)),
@@ -241,16 +425,24 @@ function useAppState() {
     }));
   }
 
-  function removeBook(book: Book) {
+  async function removeBook(book: Book) {
     if (!user || book.sellerId !== user.id) throw new Error('只有发布者可以下架');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/remove`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }));
+      return;
+    }
     setData((current) => ({
       ...current,
       books: current.books.map((item) => (item.id === book.id ? { ...item, status: 'removed', updatedAt: new Date().toISOString() } : item)),
     }));
   }
 
-  function sendMessage(book: Book, content: string) {
+  async function sendMessage(book: Book, content: string) {
     if (!user) throw new Error('请先登录');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/messages`, { method: 'POST', body: JSON.stringify({ userId: user.id, content }) }));
+      return;
+    }
     const allowed = book.sellerId === user.id || data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id);
     if (!allowed) throw new Error('请先表达想买，再进行留言');
     const now = new Date().toISOString();
@@ -261,8 +453,12 @@ function useAppState() {
     }));
   }
 
-  function submitEvaluation(book: Book, rating: number, comment: string, tags: string[]) {
+  async function submitEvaluation(book: Book, rating: number, comment: string, tags: string[]) {
     if (!user || book.status !== 'sold') throw new Error('只有已成交订单可以评价');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/evaluations`, { method: 'POST', body: JSON.stringify({ userId: user.id, rating, comment, tags }) }));
+      return;
+    }
     const isSeller = book.sellerId === user.id;
     const isBuyer = book.buyerId === user.id;
     if (!isSeller && !isBuyer) throw new Error('只有交易双方可以评价');
@@ -286,8 +482,12 @@ function useAppState() {
     }));
   }
 
-  function submitReport(book: Book, reason: string, detail: string) {
+  async function submitReport(book: Book, reason: string, detail: string) {
     if (!user) throw new Error('请先登录');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/reports`, { method: 'POST', body: JSON.stringify({ userId: user.id, reason, detail }) }));
+      return;
+    }
     setData((current) => ({
       ...current,
       reports: [...current.reports, { id: createId('report'), targetType: 'book', targetId: book.id, reporterId: user.id, reason, detail, status: 'pending', createdAt: new Date().toISOString() }],
@@ -420,22 +620,20 @@ function DetailPage({ state }: { state: AppState }) {
   const canReview = Boolean(user && book.status === 'sold' && (book.sellerId === user.id || book.buyerId === user.id));
   const activeBook = book;
   const currentImage = book.images[selectedImage]?.url || book.images[0]?.url;
-  function run(action: () => void, ok: string) {
-    try { action(); setNotice(ok); } catch (error) { setNotice(error instanceof Error ? error.message : '操作失败'); }
+  async function run(action: () => void | Promise<void>, ok: string) {
+    try { await action(); setNotice(ok); } catch (error) { setNotice(error instanceof Error ? error.message : '操作失败'); }
   }
   function handleMessage(event: FormEvent) {
     event.preventDefault();
-    if (message.trim()) { run(() => state.sendMessage(activeBook, message.trim()), '留言已发送'); setMessage(''); }
+    if (message.trim()) void run(() => state.sendMessage(activeBook, message.trim()), '留言已发送').then(() => setMessage(''));
   }
   function handleReview(event: FormEvent) {
     event.preventDefault();
-    run(() => state.submitEvaluation(activeBook, rating, comment, ['沟通顺畅']), '评价已提交');
-    setComment('');
+    void run(() => state.submitEvaluation(activeBook, rating, comment, ['沟通顺畅']), '评价已提交').then(() => setComment(''));
   }
   function handleReport(event: FormEvent) {
     event.preventDefault();
-    run(() => state.submitReport(activeBook, '用户举报', reportDetail), '举报已提交，等待管理员处理');
-    setReportDetail('');
+    void run(() => state.submitReport(activeBook, '用户举报', reportDetail), '举报已提交，等待管理员处理').then(() => setReportDetail(''));
   }
   return (
     <section className="detail-layout">
@@ -444,7 +642,7 @@ function DetailPage({ state }: { state: AppState }) {
       <div className="detail-media surface-panel">{currentImage ? <img src={currentImage} alt={book.title} /> : <div className="no-cover large"><BookOpen size={40} /><span>暂无图片</span></div>}{book.images.length > 1 && <div className="thumb-row">{book.images.map((image, index) => <button className={selectedImage === index ? 'active' : ''} key={image.id} onClick={() => setSelectedImage(index)} type="button"><img src={image.url} alt={`${book.title} 图片 ${index + 1}`} /></button>)}</div>}</div>
       <div className="detail-main page-stack">
         <section className="surface-panel detail-summary"><div className="card-title-line"><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span><span className="subtle">{formatDate(book.createdAt)}</span></div><h1>{book.title}</h1><p className="lead-text">{book.author}{book.isbn ? ` · ISBN ${book.isbn}` : ''}</p><div className="price-line">{formatPrice(book.priceCents)}</div><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span><span>{interests.length} 人想买</span></div><p className="book-description">{book.description}</p><div className="seller-box"><CircleUserRound size={32} /><div><strong>{seller?.nickname || '同学'}</strong><span>{locationPath(book)}</span></div></div></section>
-        <section className="surface-panel action-panel"><h2>交易操作</h2>{user && !isOwner && !hasInterest && book.status === 'available' && <button className="primary-button full-width" onClick={() => { run(() => state.expressInterest(book), '已记录想买，联系方式已解锁'); setShowContact(true); }} type="button"><Check size={18} /> 我想买</button>}{user && !isOwner && hasInterest && <button className="secondary-button full-width" onClick={() => setShowContact(true)} type="button"><ShieldCheck size={18} /> 查看联系方式</button>}{!user && <Link className="primary-button full-width" to="/login"><LogIn size={18} /> 登录后联系卖家</Link>}{isOwner && book.status !== 'sold' && interests.map((interest) => <button key={interest.id} className="secondary-button" onClick={() => run(() => state.confirmSold(book, interest.buyerId), '已确认成交')} type="button">确认卖给 {state.userById(interest.buyerId)?.nickname || '买家'}</button>)}{(showContact || isOwner) && user && (hasInterest || isOwner) && <div className="contact-box"><ShieldCheck size={18} /><div><span>已授权查看联系方式</span><strong>{book.contact}</strong></div></div>}</section>
+        <section className="surface-panel action-panel"><h2>交易操作</h2>{user && !isOwner && !hasInterest && book.status === 'available' && <button className="primary-button full-width" onClick={() => void run(() => state.expressInterest(book), '已记录想买，联系方式已解锁').then(() => setShowContact(true))} type="button"><Check size={18} /> 我想买</button>}{user && !isOwner && hasInterest && <button className="secondary-button full-width" onClick={() => setShowContact(true)} type="button"><ShieldCheck size={18} /> 查看联系方式</button>}{!user && <Link className="primary-button full-width" to="/login"><LogIn size={18} /> 登录后联系卖家</Link>}{isOwner && book.status !== 'sold' && interests.map((interest) => <button key={interest.id} className="secondary-button" onClick={() => void run(() => state.confirmSold(book, interest.buyerId), '已确认成交')} type="button">确认卖给 {state.userById(interest.buyerId)?.nickname || '买家'}</button>)}{(showContact || isOwner) && user && (hasInterest || isOwner) && <div className="contact-box"><ShieldCheck size={18} /><div><span>已授权查看联系方式</span><strong>{book.contact}</strong></div></div>}</section>
         {(isOwner || hasInterest) && <section className="surface-panel message-panel"><h2>留言沟通</h2><div className="message-list">{messages.map((item) => <div key={item.id} className={`message-bubble ${item.fromUserId === user?.id ? 'mine' : ''}`}><p>{item.content}</p><span>{formatDate(item.createdAt)}</span></div>)}</div>{book.status !== 'sold' && <form className="inline-form" onSubmit={handleMessage}><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="询问书况、交易地点或时间" /><button className="icon-button solid" type="submit" aria-label="发送留言"><Send size={18} /></button></form>}</section>}
         <section className="surface-panel review-panel"><h2>交易评价</h2>{evaluations.length === 0 && <p className="subtle">暂无评价。</p>}{evaluations.map((item) => <ReviewItem key={item.id} evaluation={item} />)}{canReview && <form className="review-form" onSubmit={handleReview}><label>评分<input type="range" min="1" max="5" value={rating} onChange={(event) => setRating(Number(event.target.value))} /><span>{rating} 星</span></label><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="写下这次交易体验" /><button className="secondary-button" type="submit"><Star size={16} /> 提交评价</button></form>}</section>
         <section className="surface-panel report-panel"><h2><Flag size={18} /> 举报</h2><form className="compact-form" onSubmit={handleReport}><textarea value={reportDetail} onChange={(event) => setReportDetail(event.target.value)} placeholder="可补充虚假信息、骚扰或其他问题" /><button className="ghost-button" type="submit">提交举报</button></form></section>
@@ -459,28 +657,40 @@ function ReviewItem({ evaluation }: { evaluation: Evaluation }) {
 
 function PublishPage({ state }: { state: AppState }) {
   const navigate = useNavigate();
-  const [draft, setDraft] = useState<PublishDraft>({ title: '', author: '', isbn: '', category: 'textbook', priceYuan: '', quantity: 1, condition: 'like_new', contact: '', description: '', campus: state.user?.campus || '', department: state.user?.department || '', college: state.user?.college || '', major: state.user?.major || '', imageUrls: [] });
+  const [draft, setDraft] = useState<PublishDraft>(() => readStorage<PublishDraft>(PUBLISH_DRAFT_STORAGE_KEY) || createPublishDraft(state.user));
   const [note, setNote] = useState('');
   const [isbnLoading, setIsbnLoading] = useState(false);
   const [composingLocationField, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
+  useEffect(() => {
+    writeStorage(PUBLISH_DRAFT_STORAGE_KEY, draft);
+  }, [draft]);
   if (!state.user) return <LoginRequired />;
+  const lastLocation = readStorage<PublishLocation>(LAST_LOCATION_STORAGE_KEY);
   const locationSuggestions = {
     campuses: uniqueValues([
+      draft.campus,
+      lastLocation?.campus,
       ...state.data.books.map((book) => book.campus),
       ...state.data.users.map((item) => item.campus),
       ...campusConfig.campuses.map((item) => item.name),
     ]),
     departments: uniqueValues([
+      draft.department,
+      lastLocation?.department,
       ...state.data.books.map((book) => book.department),
       ...state.data.users.map((item) => item.department),
       ...campusConfig.campuses.flatMap((campus) => campus.departments.map((department) => department.name)),
     ]),
     colleges: uniqueValues([
+      draft.college,
+      lastLocation?.college,
       ...state.data.books.map((book) => book.college),
       ...state.data.users.map((item) => item.college),
       ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.map((college) => college.name))),
     ]),
     majors: uniqueValues([
+      draft.major,
+      lastLocation?.major,
       ...state.data.books.map((book) => book.major),
       ...state.data.users.map((item) => item.major),
       ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.flatMap((college) => college.majors))),
@@ -559,13 +769,25 @@ function PublishPage({ state }: { state: AppState }) {
     setComposingLocationField(null);
     setField(key, keepChineseOnly(event.currentTarget.value));
   }
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     const imageUrls = draft.imageUrls.map((url) => url.trim()).filter(Boolean);
     const invalidLocation = hasInvalidLocationField(draft);
     if (!Number.isFinite(draft.quantity) || draft.quantity < 1) { setNote('请填写大于 0 的数量。'); return; }
     if (invalidLocation) { setNote(`${locationFieldLabels[invalidLocation]}只能输入中文。`); return; }
-    navigate(`/books/${state.publishBook({ ...draft, imageUrls })}`);
+    try {
+      const bookId = await state.publishBook({ ...draft, imageUrls });
+      writeStorage(LAST_LOCATION_STORAGE_KEY, {
+        campus: draft.campus,
+        department: draft.department,
+        college: draft.college,
+        major: draft.major,
+      });
+      removeStorage(PUBLISH_DRAFT_STORAGE_KEY);
+      navigate(`/books/${bookId}`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : '发布失败，请稍后重试。');
+    }
   }
   return (
     <section className="page-stack narrow-page"><div className="section-head"><div><p className="eyebrow">发布书籍</p><h1>把闲置书放进书城</h1></div></div>{note && <div className="inline-alert">{note}</div>}<form className="surface-panel publish-form" onSubmit={submit}>
@@ -592,20 +814,20 @@ function MyBooksPage({ state }: { state: AppState }) {
   const [status, setStatus] = useState<BookStatus>('available');
   if (!state.user) return <LoginRequired />;
   const myBooks = state.data.books.filter((book) => book.sellerId === state.user?.id && book.status === status);
-  return <section className="page-stack"><div className="profile-panel surface-panel"><CircleUserRound size={44} /><div><h1>{state.user.nickname}</h1><p>{locationPath(state.user)}</p></div><button className="secondary-button" onClick={() => navigate('/me/profile')} type="button">编辑资料</button></div><div className="segmented sticky-tabs">{(['available', 'sold', 'removed'] as BookStatus[]).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)} type="button">{statusLabels[item]}</button>)}</div><div className="book-grid">{myBooks.map((book) => <BookCard key={book.id} book={book} state={state} mine onRemove={book.status !== 'sold' ? () => state.removeBook(book) : undefined} />)}</div>{myBooks.length === 0 && <EmptyState title="这里还没有书" text="发布一本闲置书后会出现在这里。" />}</section>;
+  return <section className="page-stack"><div className="profile-panel surface-panel"><CircleUserRound size={44} /><div><h1>{state.user.nickname}</h1><p>{locationPath(state.user)}</p></div><button className="secondary-button" onClick={() => navigate('/me/profile')} type="button">编辑资料</button></div><div className="segmented sticky-tabs">{(['available', 'sold', 'removed'] as BookStatus[]).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)} type="button">{statusLabels[item]}</button>)}</div><div className="book-grid">{myBooks.map((book) => <BookCard key={book.id} book={book} state={state} mine onRemove={book.status !== 'sold' ? () => { void state.removeBook(book); } : undefined} />)}</div>{myBooks.length === 0 && <EmptyState title="这里还没有书" text="发布一本闲置书后会出现在这里。" />}</section>;
 }
 
 function ProfilePage({ state }: { state: AppState }) {
   const navigate = useNavigate();
   const [draft, setDraft] = useState<User | null>(state.user);
   if (!draft) return <LoginRequired />;
-  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); state.updateUser(draft); navigate('/me/books'); }}><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input value={draft.campus || ''} onChange={(event) => setDraft({ ...draft, campus: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学部<input value={draft.department || ''} onChange={(event) => setDraft({ ...draft, department: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学院<input value={draft.college || ''} onChange={(event) => setDraft({ ...draft, college: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>专业<input value={draft.major || ''} onChange={(event) => setDraft({ ...draft, major: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
+  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input value={draft.campus || ''} onChange={(event) => setDraft({ ...draft, campus: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学部<input value={draft.department || ''} onChange={(event) => setDraft({ ...draft, department: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学院<input value={draft.college || ''} onChange={(event) => setDraft({ ...draft, college: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>专业<input value={draft.major || ''} onChange={(event) => setDraft({ ...draft, major: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
 }
 
 function LoginPage({ state }: { state: AppState }) {
   const navigate = useNavigate();
-  const [identifier, setIdentifier] = useState('student@example.edu');
-  return <section className="login-page surface-panel"><div className="login-icon"><BookOpen size={36} /></div><h1>登录 JL拾遗</h1><p>当前是本地演示登录。接入后端后会替换为邮箱或短信验证码。现在发布的书只保存在浏览器内存里，刷新页面会丢失。</p><form onSubmit={(event) => { event.preventDefault(); state.login(identifier); navigate('/books'); }}><label>邮箱或手机号<input value={identifier} onChange={(event) => setIdentifier(event.target.value)} /></label><button className="primary-button full-width" type="submit">登录</button></form></section>;
+  const [identifier, setIdentifier] = useState(() => readStorage<SavedSession>(SESSION_STORAGE_KEY)?.identifier || '');
+  return <section className="login-page surface-panel"><div className="login-icon"><BookOpen size={36} /></div><h1>登录 JL拾遗</h1><p>输入自定义账号后进入书城。</p><form onSubmit={(event) => { event.preventDefault(); void state.login(identifier).then(() => navigate('/books')); }}><label>账号<input value={identifier} maxLength={60} onChange={(event) => setIdentifier(event.target.value)} placeholder="中文、英文或数字，最多 60 个" /></label><button className="primary-button full-width" type="submit">登录</button></form></section>;
 }
 
 function EmptyState({ title, text }: { title: string; text: string }) {

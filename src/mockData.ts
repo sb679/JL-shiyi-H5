@@ -43,7 +43,7 @@ export const campusConfig: CampusConfig = {
 
 export const currentUserSeed: User = {
   id: 'user_me',
-  loginIdentifier: 'student@example.edu',
+  loginIdentifier: '拾遗用户A9K2',
   nickname: '拾遗用户A9K2',
   campus: '三江校区东园',
   department: '信息学部',
@@ -55,11 +55,11 @@ export const currentUserSeed: User = {
 export const seedData: AppData = {
   users: [
     currentUserSeed,
-    { id: 'seller_1', loginIdentifier: 'lin@example.edu', nickname: '林同学', campus: '三江校区东园', department: '信息学部', college: '计算机学院', major: '软件工程', role: 'user' },
-    { id: 'seller_2', loginIdentifier: 'zhou@example.edu', nickname: '周同学', campus: '三江校区东园', department: '信息学部', college: '数理学院', major: '应用数学', role: 'user' },
-    { id: 'seller_3', loginIdentifier: 'he@example.edu', nickname: '何同学', campus: '三江校区西园', department: '人文经管学部', college: '外国语学院', major: '英语', role: 'user' },
-    { id: 'buyer_1', loginIdentifier: 'xu@example.edu', nickname: '许同学', role: 'user' },
-    { id: 'buyer_2', loginIdentifier: 'chen@example.edu', nickname: '陈同学', role: 'user' },
+    { id: 'seller_1', loginIdentifier: '林同学01', nickname: '林同学', campus: '三江校区东园', department: '信息学部', college: '计算机学院', major: '软件工程', role: 'user' },
+    { id: 'seller_2', loginIdentifier: '周同学02', nickname: '周同学', campus: '三江校区东园', department: '信息学部', college: '数理学院', major: '应用数学', role: 'user' },
+    { id: 'seller_3', loginIdentifier: '何同学03', nickname: '何同学', campus: '三江校区西园', department: '人文经管学部', college: '外国语学院', major: '英语', role: 'user' },
+    { id: 'buyer_1', loginIdentifier: '许同学01', nickname: '许同学', role: 'user' },
+    { id: 'buyer_2', loginIdentifier: '陈同学02', nickname: '陈同学', role: 'user' },
   ],
   books: [
     {

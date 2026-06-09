@@ -30,6 +30,11 @@ OSS_ACCESS_KEY_SECRET=your-access-key-secret
 OSS_PUBLIC_BASE_URL=https://your-bucket-name.oss-cn-hangzhou.aliyuncs.com
 UPLOAD_MAX_FILE_SIZE=8388608
 UPLOAD_MAX_FILES=30
+MYSQL_HOST=rm-bp15742960i2w1hh8.mysql.rds.aliyuncs.com
+MYSQL_PORT=3306
+MYSQL_DATABASE=jl_shiyi_app
+MYSQL_USER=jl_shiyi_app
+MYSQL_PASSWORD=demo-change-me
 ```
 
 前端只能使用非敏感配置：
