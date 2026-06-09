@@ -15,9 +15,21 @@ Write-Host "Running local verification..." -ForegroundColor Cyan
 npm run build
 npm run lint
 
-Write-Host "Committing and pushing to GitHub..." -ForegroundColor Cyan
+Write-Host "Committing and pushing to GitHub + Gitee..." -ForegroundColor Cyan
 git add .
 git commit -m $Message
+
+Write-Host "  推送到 GitHub (origin)..." -ForegroundColor Yellow
 git push origin main
 
-Write-Host "Published to GitHub. GitHub Actions will run CI, and ECS auto-update will pull the new code if its scheduled task is enabled." -ForegroundColor Green
+Write-Host "  推送到 Gitee (gitee)..." -ForegroundColor Yellow
+$GiteeExists = git remote | Where-Object { $_ -match '^gitee$' }
+if ($GiteeExists) {
+  git push gitee main
+  Write-Host "Pushed to GitHub + Gitee." -ForegroundColor Green
+} else {
+  Write-Host "未找到 gitee remote，跳过 Gitee 推送。" -ForegroundColor Yellow
+  Write-Host "运行 .\scripts\windows-gitee-mirror-setup.ps1 配置 Gitee 镜像。" -ForegroundColor Yellow
+}
+
+Write-Host "Published. GitHub Actions will run CI. ECS auto-update will pull from Gitee." -ForegroundColor Green
