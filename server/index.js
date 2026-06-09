@@ -40,7 +40,9 @@ const corsOrigin = process.env.CORS_ORIGIN;
 
 app.use(cors(corsOrigin ? { origin: corsOrigin } : undefined));
 
-app.use(express.json());
+// 允许较大的 JSON body（用于处理 base64 图片数据作为后备方案）
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 function requireEnv(name) {
   const value = process.env[name];

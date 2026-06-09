@@ -1,4 +1,4 @@
-import { ChangeEvent, CompositionEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, CompositionEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
@@ -494,7 +494,17 @@ function useAppState() {
     }));
   }
 
-  return { user, data, userById, activeInterests, login, updateUser, publishBook, expressInterest, confirmSold, removeBook, sendMessage, submitEvaluation, submitReport };
+  async function refreshData() {
+    if (!remoteReady) return;
+    try {
+      const nextData = await requestJson<AppData>('/api/state');
+      setData(nextData);
+    } catch {
+      // 静默失败，保持当前数据
+    }
+  }
+
+  return { user, data, userById, activeInterests, login, updateUser, publishBook, expressInterest, confirmSold, removeBook, sendMessage, submitEvaluation, submitReport, refreshData };
 }
 
 type AppState = ReturnType<typeof useAppState>;
@@ -762,10 +772,12 @@ function PublishPage({ state }: { state: AppState }) {
   function addImageUrl() {
     setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, ''] }));
   }
+  const composingRef = useRef(false);
   function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) {
-    setField(key, composingLocationField === key ? value : keepChineseOnly(value));
+    setField(key, composingRef.current ? value : keepChineseOnly(value));
   }
   function finishLocationComposition(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, event: CompositionEvent<HTMLInputElement>) {
+    composingRef.current = false;
     setComposingLocationField(null);
     setField(key, keepChineseOnly(event.currentTarget.value));
   }
@@ -794,7 +806,7 @@ function PublishPage({ state }: { state: AppState }) {
       <div className="isbn-row"><label>ISBN<input value={draft.isbn} onChange={(event) => setField('isbn', event.target.value)} placeholder="输入 ISBN 后查询" /></label><button className="secondary-button" disabled={isbnLoading} type="button" onClick={lookupIsbn}><Search size={16} /> {isbnLoading ? '查询中' : '查询'}</button></div>
       <label>书名<input value={draft.title} onChange={(event) => setField('title', event.target.value)} /></label><label>作者<input value={draft.author} onChange={(event) => setField('author', event.target.value)} /></label>
       <div className="form-grid"><label>分类<select value={draft.category} onChange={(event) => setField('category', event.target.value as BookCategory)}>{(['textbook', 'novel', 'reference', 'other'] as BookCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}</select></label><label>新旧程度<select value={draft.condition} onChange={(event) => setField('condition', event.target.value as BookCondition)}>{(Object.keys(conditionLabels) as BookCondition[]).map((item) => <option key={item} value={item}>{conditionLabels[item]}</option>)}</select></label><label>价格<input type="number" min="0" step="0.5" value={draft.priceYuan} onChange={(event) => setField('priceYuan', event.target.value)} /></label><label>数量<input type="number" min="1" max="9" value={draft.quantity} onChange={(event) => setField('quantity', Number(event.target.value))} /></label></div>
-      <div className="form-grid"><label>校区<input list="campus-options" value={draft.campus} onCompositionStart={() => setComposingLocationField('campus')} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="department-options" value={draft.department} onCompositionStart={() => setComposingLocationField('department')} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="college-options" value={draft.college} onCompositionStart={() => setComposingLocationField('college')} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="major-options" value={draft.major} onCompositionStart={() => setComposingLocationField('major')} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label></div>
+      <div className="form-grid"><label>校区<input list="campus-options" value={draft.campus} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="department-options" value={draft.department} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="college-options" value={draft.college} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="major-options" value={draft.major} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label></div>
       <datalist id="campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist>
       <datalist id="department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist>
       <datalist id="college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist>
@@ -820,8 +832,24 @@ function MyBooksPage({ state }: { state: AppState }) {
 function ProfilePage({ state }: { state: AppState }) {
   const navigate = useNavigate();
   const [draft, setDraft] = useState<User | null>(state.user);
+  const [composingLocationField, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
   if (!draft) return <LoginRequired />;
-  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input value={draft.campus || ''} onChange={(event) => setDraft({ ...draft, campus: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学部<input value={draft.department || ''} onChange={(event) => setDraft({ ...draft, department: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>学院<input value={draft.college || ''} onChange={(event) => setDraft({ ...draft, college: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><label>专业<input value={draft.major || ''} onChange={(event) => setDraft({ ...draft, major: keepChineseOnly(event.target.value) })} placeholder="只能输入中文" /></label><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
+  const locationSuggestions = {
+    campuses: uniqueValues([draft.campus, ...state.data.books.map((book) => book.campus), ...campusConfig.campuses.map((item) => item.name)]),
+    departments: uniqueValues([draft.department, ...state.data.books.map((book) => book.department), ...campusConfig.campuses.flatMap((campus) => campus.departments.map((department) => department.name))]),
+    colleges: uniqueValues([draft.college, ...state.data.books.map((book) => book.college), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.map((college) => college.name)))]),
+    majors: uniqueValues([draft.major, ...state.data.books.map((book) => book.major), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.flatMap((college) => college.majors)))]),
+  };
+  const composingRef = useRef(false);
+  function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) {
+    setDraft((current) => current && { ...current, [key]: composingRef.current ? value : keepChineseOnly(value) });
+  }
+  function finishLocationComposition(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, event: CompositionEvent<HTMLInputElement>) {
+    composingRef.current = false;
+    setComposingLocationField(null);
+    setDraft((current) => current && { ...current, [key]: keepChineseOnly(event.currentTarget.value) });
+  }
+  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input list="profile-campus-options" value={draft.campus || ''} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="profile-department-options" value={draft.department || ''} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="profile-college-options" value={draft.college || ''} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="profile-major-options" value={draft.major || ''} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label><datalist id="profile-campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
 }
 
 function LoginPage({ state }: { state: AppState }) {
