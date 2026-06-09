@@ -25,7 +25,8 @@ const queryClient = new QueryClient();
 const GOOGLE_BOOKS_API_KEY = ((import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined) || '').trim();
 const configuredUploadEndpoint = (import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined) || '';
 const UPLOAD_ENDPOINT = configuredUploadEndpoint || '/api/uploads/images';
-const API_TIMEOUT_MS = 10000;
+const API_TIMEOUT_MS = 15000;
+const UPLOAD_TIMEOUT_MS = 120000;
 const SESSION_STORAGE_KEY = 'jl-shiyi-session-v1';
 const PUBLISH_DRAFT_STORAGE_KEY = 'jl-shiyi-publish-draft-v1';
 const LAST_LOCATION_STORAGE_KEY = 'jl-shiyi-last-location-v1';
@@ -257,11 +258,12 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
-async function uploadImagesToOss(files: File[]) {
+async function uploadImagesToOss(files: File[], onProgress?: (text: string) => void) {
   const formData = new FormData();
   files.forEach((file) => formData.append('images', file));
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeoutId = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+  onProgress?.(`正在上传 ${files.length} 张图片到 OSS（最多 ${UPLOAD_TIMEOUT_MS / 1000} 秒）...`);
   let response: Response;
   try {
     response = await fetch(UPLOAD_ENDPOINT, {
@@ -269,7 +271,10 @@ async function uploadImagesToOss(files: File[]) {
       body: formData,
       signal: controller.signal,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`图片上传超时（已等待 ${UPLOAD_TIMEOUT_MS / 1000} 秒），请检查网络或减少图片数量后重试。`);
+    }
     throw new Error('图片上传接口连接失败，请确认后端服务已启动，且 OSS 环境变量已配置。');
   } finally {
     window.clearTimeout(timeoutId);
@@ -670,6 +675,7 @@ function PublishPage({ state }: { state: AppState }) {
   const [draft, setDraft] = useState<PublishDraft>(() => readStorage<PublishDraft>(PUBLISH_DRAFT_STORAGE_KEY) || createPublishDraft(state.user));
   const [note, setNote] = useState('');
   const [isbnLoading, setIsbnLoading] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [composingLocationField, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
   useEffect(() => {
     writeStorage(PUBLISH_DRAFT_STORAGE_KEY, draft);
@@ -783,12 +789,16 @@ function PublishPage({ state }: { state: AppState }) {
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (publishing) return;
     const imageUrls = draft.imageUrls.map((url) => url.trim()).filter(Boolean);
     const invalidLocation = hasInvalidLocationField(draft);
     if (!Number.isFinite(draft.quantity) || draft.quantity < 1) { setNote('请填写大于 0 的数量。'); return; }
     if (invalidLocation) { setNote(`${locationFieldLabels[invalidLocation]}只能输入中文。`); return; }
+    setPublishing(true);
+    setNote('正在发布书籍，请稍候...');
     try {
       const bookId = await state.publishBook({ ...draft, imageUrls });
+      setNote('发布成功！正在跳转...');
       writeStorage(LAST_LOCATION_STORAGE_KEY, {
         campus: draft.campus,
         department: draft.department,
@@ -799,6 +809,8 @@ function PublishPage({ state }: { state: AppState }) {
       navigate(`/books/${bookId}`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : '发布失败，请稍后重试。');
+    } finally {
+      setPublishing(false);
     }
   }
   return (
@@ -816,7 +828,7 @@ function PublishPage({ state }: { state: AppState }) {
       <div className="image-tools"><label className="upload-button"><ImagePlus size={18} /> 选择本地图片<input multiple type="file" accept="image/*" onChange={handleLocalImages} /></label><button className="ghost-button" type="button" onClick={addImageUrl}>添加图片链接</button></div>
       <div className="image-list">{draft.imageUrls.map((url, index) => <div className="image-editor" key={`${index}-${url.slice(0, 24)}`}><img src={url || 'https://placehold.co/240x240?text=Book'} alt={`书籍图片 ${index + 1}`} /><label>图片 {index + 1}<input value={url.startsWith('data:') ? '已选择本地图片' : url} onChange={(event) => updateImageUrl(index, event.target.value)} disabled={url.startsWith('data:')} /></label><button className="text-danger" type="button" onClick={() => removeImage(index)}>删除</button></div>)}</div>
       <div className="upload-preview"><ImagePlus size={18} /><span>照片数量不做前端上限限制；选择本地图片后会上传到阿里云 OSS，并保存返回的图片地址。</span></div>
-      <label>描述<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} placeholder="写明书况、笔记、缺页、交易地点偏好等" /></label><button className="primary-button full-width" type="submit">立即发布</button>
+      <label>描述<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} placeholder="写明书况、笔记、缺页、交易地点偏好等" /></label><button className="primary-button full-width" disabled={publishing} type="submit">{publishing ? '发布中...' : '立即发布'}</button>
     </form></section>
   );
 }
