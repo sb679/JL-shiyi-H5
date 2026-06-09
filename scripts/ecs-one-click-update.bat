@@ -1,71 +1,70 @@
 @echo off
 chcp 65001 >nul 2>&1
-title JL拾遗 H5 - 一键更新
+title JL Shiyi H5 - One Click Update
 color 0A
 
 echo ===============================================================================
-echo   JL拾遗 H5 - 一键更新脚本
-echo   双击此文件即可从 Gitee 拉取最新代码、构建并重启服务
+echo   JL Shiyi H5 - One Click Update
+echo   Pull latest code from Gitee, build and restart service
 echo ===============================================================================
 echo.
 
 cd /d C:\jl-shiyi-h5-gitee
 
 if not exist "C:\jl-shiyi-h5-gitee" (
-    echo [错误] 项目目录 C:\jl-shiyi-h5-gitee 不存在！
-    echo 请先运行部署脚本。
+    echo [ERROR] Project directory C:\jl-shiyi-h5-gitee not found!
+    echo Please run deploy script first.
     pause
     exit /b 1
 )
 
-echo [1/5] 检查 Gitee 连接...
+echo [1/5] Checking Gitee connection...
 git remote get-url origin
 if errorlevel 1 (
-    echo [错误] 无法获取 Git 远程地址
+    echo [ERROR] Cannot get Git remote URL
     pause
     exit /b 1
 )
 
 echo.
-echo [2/5] 从 Gitee 拉取最新代码...
+echo [2/5] Fetching latest code from Gitee...
 git fetch origin main
 if errorlevel 1 (
-    echo [错误] git fetch 失败，请检查网络连接
+    echo [ERROR] git fetch failed, please check network
     pause
     exit /b 1
 )
 
 echo.
-echo [3/5] 更新本地代码...
+echo [3/5] Updating local code...
 git reset --hard origin/main
 
 echo.
-echo [4/5] 构建项目...
+echo [4/5] Building project...
 call npm run build
 if errorlevel 1 (
-    echo [错误] 构建失败
+    echo [ERROR] Build failed
     pause
     exit /b 1
 )
 
 echo.
-echo [5/5] 重启服务...
+echo [5/5] Restarting service...
 taskkill /f /im node.exe >nul 2>&1
 schtasks /run /tn "JL拾遗 H5 Server"
 if errorlevel 1 (
-    echo [警告] 计划任务启动失败，尝试直接启动...
+    echo [WARN] Scheduled task failed, starting directly...
     start /b node server/index.js
 )
 
 echo.
 echo ===============================================================================
-echo   更新完成！
-echo   等待 3 秒后检查服务状态...
+echo   Update complete! Checking service health in 3 seconds...
 echo ===============================================================================
 timeout /t 3 /nobreak >nul
 
 curl -s http://127.0.0.1:8080/api/health
 echo.
 echo.
-echo 按任意键关闭此窗口...
+echo Press any key to close...
 pause >nul

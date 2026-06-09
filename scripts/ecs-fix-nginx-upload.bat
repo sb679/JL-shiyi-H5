@@ -1,33 +1,35 @@
 @echo off
 chcp 65001 >nul 2>&1
-title JL拾遗 H5 - 修复 Nginx 上传限制
+title JL Shiyi H5 - Fix Upload Limit (Nginx / IIS / multer)
 color 0A
 
 echo ===============================================================================
-echo   JL拾遗 H5 - 修复 Nginx "request entity too large" 错误
-echo   将 Nginx 的 client_max_body_size 从默认 1MB 增加到 50MB
+echo   JL Shiyi H5 - Fix "request entity too large" upload limit
+echo   50MB (Nginx client_max_body_size / IIS maxAllowedContentLength / multer)
 echo ===============================================================================
 echo.
 
-:: 检查是否以管理员身份运行
+:: Check admin privileges
 net session >nul 2>&1
 if errorlevel 1 (
-    echo [错误] 请右键此脚本，选择"以管理员身份运行"！
+    echo [ERROR] Please right-click this script and select "Run as administrator"!
     echo.
     pause
     exit /b 1
 )
 
-echo [1/3] 查找 Nginx 配置文件...
+REM ============================================================
+REM Step 1: Try Nginx fix
+REM ============================================================
+echo [1/4] Searching for Nginx config file...
 
-:: 常见 Nginx 配置路径
 set NGINX_CONF=
 if exist "C:\nginx\conf\nginx.conf" set NGINX_CONF=C:\nginx\conf\nginx.conf
 if exist "C:\Program Files\nginx\conf\nginx.conf" set NGINX_CONF=C:\Program Files\nginx\conf\nginx.conf
 if exist "C:\nginx-1.24.0\conf\nginx.conf" set NGINX_CONF=C:\nginx-1.24.0\conf\nginx.conf
 if exist "C:\nginx-1.26.0\conf\nginx.conf" set NGINX_CONF=C:\nginx-1.26.0\conf\nginx.conf
 
-:: 如果没找到，尝试用 where 命令
+:: Try where command if not found
 if "%NGINX_CONF%"=="" (
     for /f "delims=" %%i in ('where nginx 2^>nul') do (
         set NGINX_DIR=%%~dpi
@@ -38,48 +40,32 @@ if "%NGINX_CONF%"=="" (
 )
 
 if "%NGINX_CONF%"=="" (
-    echo [错误] 未找到 Nginx 配置文件！
+    echo [INFO]  Nginx not installed on this server. Skipping Nginx step.
     echo.
-    echo 请手动修改 Nginx 配置：
-    echo   1. 找到 nginx.conf 文件
-    echo   2. 在 http { } 块内添加：client_max_body_size 50m;
-    echo   3. 重启 Nginx：nginx -s reload
-    echo.
-    pause
-    exit /b 1
+    goto :fix_iis
 )
 
-echo 找到配置文件: %NGINX_CONF%
+echo Found Nginx config: %NGINX_CONF%
 echo.
 
-echo [2/3] 检查是否已配置 client_max_body_size...
+echo [2/4] Checking Nginx client_max_body_size setting...
 findstr /i "client_max_body_size" "%NGINX_CONF%" >nul 2>&1
 if errorlevel 1 (
-    echo 未找到 client_max_body_size 配置，正在添加...
-    
-    :: 备份原配置
+    echo Not found, adding client_max_body_size 50m...
     copy "%NGINX_CONF%" "%NGINX_CONF%.bak" >nul
-    
-    :: 在 http { 后面添加 client_max_body_size
     powershell -Command "$content = Get-Content '%NGINX_CONF%' -Raw; $content = $content -replace '(http\s*\{)', \"`$1`r`n    client_max_body_size 50m;\"; Set-Content '%NGINX_CONF%' -Value $content -Encoding UTF8"
-    
-    echo 已添加 client_max_body_size 50m;
+    echo Added client_max_body_size 50m;
 ) else (
-    echo 已存在 client_max_body_size 配置，正在更新为 50m...
-    
-    :: 备份原配置
+    echo Found existing setting, updating to 50m...
     copy "%NGINX_CONF%" "%NGINX_CONF%.bak" >nul
-    
-    :: 替换现有的 client_max_body_size
     powershell -Command "$content = Get-Content '%NGINX_CONF%' -Raw; $content = $content -replace 'client_max_body_size\s+[^;]+;', 'client_max_body_size 50m;'; Set-Content '%NGINX_CONF%' -Value $content -Encoding UTF8"
-    
-    echo 已更新 client_max_body_size 为 50m;
+    echo Updated client_max_body_size to 50m;
 )
 
 echo.
-echo [3/3] 重新加载 Nginx 配置...
+echo [3/4] Reloading Nginx config...
 
-:: 查找 nginx.exe
+:: Find nginx.exe
 set NGINX_EXE=
 if exist "C:\nginx\nginx.exe" set NGINX_EXE=C:\nginx\nginx.exe
 if exist "C:\Program Files\nginx\nginx.exe" set NGINX_EXE=C:\Program Files\nginx\nginx.exe
@@ -91,20 +77,106 @@ if "%NGINX_EXE%"=="" (
 )
 
 if "%NGINX_EXE%"=="" (
-    echo [警告] 未找到 nginx.exe，请手动重启 Nginx
+    echo [WARN]  nginx.exe not found, restart Nginx manually: nginx -s reload
 ) else (
     "%NGINX_EXE%" -s reload
-    echo Nginx 已重新加载
+    echo Nginx reloaded successfully.
 )
 
 echo.
 echo ===============================================================================
-echo   修复完成！
+echo   Nginx step complete.
+echo ===============================================================================
 echo.
-echo   现在可以上传最大 50MB 的文件了。
-echo   如果仍然报错，请检查：
-echo     1. Nginx 是否成功重启
-echo     2. 是否有其他反向代理（如 IIS）也有限制
+
+REM ============================================================
+REM Step 2: IIS fix (if IIS is installed)
+REM ============================================================
+:fix_iis
+set IIS_APPCMD=C:\Windows\System32\inetsrv\appcmd.exe
+if not exist "%IIS_APPCMD%" (
+    echo [INFO]  IIS is not installed on this server. Skipping IIS step.
+    goto :fix_multer
+)
+
+echo [*]  IIS detected. Checking request limits...
+
+REM Try to read current requestFiltering config
+"%IIS_APPCMD%" list config /section:requestFiltering >nul 2>&1
+if errorlevel 1 (
+    echo [INFO]  Cannot read IIS config. Run script as Administrator.
+    echo.
+    echo Manual steps to increase IIS upload limit to 50MB:
+    echo   1. Open IIS Manager (inetmgr)
+    echo   2. Click the server node, then choose "Request Filtering"
+    echo   3. Click "Edit Feature Settings..." in the right panel
+    echo   4. Set "Maximum allowed content length" to 52428800
+    echo   5. Restart the website / app pool
+    echo.
+    goto :fix_multer
+)
+
+echo Setting IIS maxAllowedContentLength to 50MB (52428800 bytes)...
+"%IIS_APPCMD%" set config /section:requestFiltering /requestLimits.maxAllowedContentLength:52428800
+if errorlevel 1 (
+    echo [WARN]  Failed to set IIS upload limit. Run script as Administrator.
+) else (
+    echo IIS maxAllowedContentLength successfully set to 52428800 bytes.
+)
+
+echo.
+echo ===============================================================================
+echo   IIS step complete.
+echo ===============================================================================
+echo.
+
+REM ============================================================
+REM Step 3: multer (Node.js) upload size fix
+REM ============================================================
+:fix_multer
+set ENV_FILE=
+if exist "C:\jl-shiyi-h5\.env" set ENV_FILE=C:\jl-shiyi-h5\.env
+if exist "C:\jl-shiyi-h5-gitee\.env" set ENV_FILE=C:\jl-shiyi-h5-gitee\.env
+
+if "%ENV_FILE%"=="" (
+    echo [INFO]  .env file not found. Skipping multer step.
+    echo   If using multer for uploads, add to your .env:
+    echo   UPLOAD_MAX_FILE_SIZE=52428800
+    goto :done
+)
+
+echo [4/4] Checking multer (Node.js) file size limit in %ENV_FILE%...
+
+findstr /i "UPLOAD_MAX_FILE_SIZE" "%ENV_FILE%" >nul 2>&1
+if errorlevel 1 (
+    echo UPLOAD_MAX_FILE_SIZE not found. Adding default 50MB...
+    echo UPLOAD_MAX_FILE_SIZE=52428800 >> "%ENV_FILE%"
+    echo Added. Run scripts/windows-ecs-update-gitee.ps1 to rebuild and restart.
+) else (
+    echo UPLOAD_MAX_FILE_SIZE already configured.
+    echo Current setting:
+    findstr /i "UPLOAD_MAX_FILE_SIZE" "%ENV_FILE%"
+)
+
+echo.
+echo ===============================================================================
+echo   Multer step complete.
+echo ===============================================================================
+
+:done
+echo.
+echo ===============================================================================
+echo   ALL DONE - Upload limit raised to 50MB
+echo.
+echo   Summary:
+echo     - Nginx client_max_body_size 50m (if Nginx installed)
+echo     - IIS maxAllowedContentLength 52428800 (if IIS installed)
+echo     - multer UPLOAD_MAX_FILE_SIZE 52428800 (in .env)
+echo.
+echo   If the error persists:
+echo     1. Restart the website / app pool (IIS: iisreset)
+echo     2. Rebuild and restart Node service (run update script)
+echo     3. Check that no other reverse proxy has its own limit
 echo ===============================================================================
 echo.
 pause

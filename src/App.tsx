@@ -676,7 +676,7 @@ function PublishPage({ state }: { state: AppState }) {
   const [note, setNote] = useState('');
   const [isbnLoading, setIsbnLoading] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [composingLocationField, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
+  const [, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
   useEffect(() => {
     writeStorage(PUBLISH_DRAFT_STORAGE_KEY, draft);
   }, [draft]);
@@ -844,7 +844,7 @@ function MyBooksPage({ state }: { state: AppState }) {
 function ProfilePage({ state }: { state: AppState }) {
   const navigate = useNavigate();
   const [draft, setDraft] = useState<User | null>(state.user);
-  const [composingLocationField, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
+  const [, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
   if (!draft) return <LoginRequired />;
   const locationSuggestions = {
     campuses: uniqueValues([draft.campus, ...state.data.books.map((book) => book.campus), ...campusConfig.campuses.map((item) => item.name)]),
