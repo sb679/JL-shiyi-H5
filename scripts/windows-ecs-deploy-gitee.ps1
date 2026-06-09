@@ -17,7 +17,7 @@ if ([string]::IsNullOrWhiteSpace($GiteeUser)) {
 }
 $RepoUrl = "https://gitee.com/$GiteeUser/JL-shiyi-H5.git"
 
-$InstallDir = 'C:\jl-shiyi-h5'
+$InstallDir = 'C:\jl-shiyi-h5-gitee'
 $PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
 
