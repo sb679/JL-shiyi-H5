@@ -119,9 +119,17 @@ if errorlevel 1 (
 echo Setting IIS maxAllowedContentLength to 50MB (52428800 bytes)...
 "%IIS_APPCMD%" set config /section:requestFiltering /requestLimits.maxAllowedContentLength:52428800
 if errorlevel 1 (
-    echo [WARN]  Failed to set IIS upload limit. Run script as Administrator.
+    echo [WARN]  Failed to set maxAllowedContentLength. Run script as Administrator.
 ) else (
-    echo IIS maxAllowedContentLength successfully set to 52428800 bytes.
+    echo IIS maxAllowedContentLength set to 52428800.
+)
+
+echo Setting IIS uploadReadAheadSize to 50MB (52428800 bytes)...
+"%IIS_APPCMD%" set config /section:system.webServer/serverRuntime /uploadReadAheadSize:52428800
+if errorlevel 1 (
+    echo [WARN]  Failed to set uploadReadAheadSize. Run script as Administrator.
+) else (
+    echo IIS uploadReadAheadSize set to 52428800.
 )
 
 echo.
