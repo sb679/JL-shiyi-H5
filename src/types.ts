@@ -40,7 +40,7 @@ export type Book = {
   college?: string;
   major?: string;
   status: BookStatus;
-  buyerId?: string;
+  buyerIds: string[];
   soldAt?: string;
   lastMessageAt?: string;
   createdAt: string;
@@ -51,6 +51,7 @@ export type Interest = {
   id: string;
   bookId: string;
   buyerId: string;
+  quantity: number;
   status: 'active' | 'cancelled' | 'chosen';
   createdAt: string;
 };

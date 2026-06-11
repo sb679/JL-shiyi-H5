@@ -35,7 +35,14 @@ MYSQL_PORT=3306
 MYSQL_DATABASE=jl_shiyi_app
 MYSQL_USER=jl_shiyi_app
 MYSQL_PASSWORD=demo-change-me
+DEPLOY_WEBHOOK_PORT=9000
+DEPLOY_WEBHOOK_SECRET=your-webhook-secret
 ```
+
+GitHub Actions 的 webhook 密钥须在仓库 Settings → Secrets and variables → Actions 中配置 `DEPLOY_WEBHOOK_SECRET` 和 `ECS_HOST`，不要写在 `.env.example` 或源代码中。
+
+- **为什么 webhook 密钥需要保密**：拥有密钥即可向 ECS 发送部署请求（触发 git pull + 构建 + 重启），泄露等于开放未经授权的远端执行权限。
+- **为什么 ECS_HOST 也需要保密**：暴露 ECS 公网 IP 会增加扫描和攻击面，应保持在 Secrets 中。
 
 前端只能使用非敏感配置：
 
@@ -66,7 +73,7 @@ VITE_UPLOAD_ENDPOINT=/api/uploads/images
 ```bash
 git status --short
 git diff --check
-git grep -n -I -E "AccessKey|AccessKeySecret|password|secret|BEGIN .*PRIVATE KEY|OSS_ACCESS_KEY_SECRET|ECS"
+git grep -n -I -E "AccessKey|AccessKeySecret|password|secret|BEGIN .*PRIVATE KEY|OSS_ACCESS_KEY_SECRET|DEPLOY_WEBHOOK_SECRET|ECS_HOST"
 npm run build
 npm run lint
 ```

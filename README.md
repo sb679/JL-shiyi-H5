@@ -50,13 +50,14 @@ http://localhost:5173/
 ```bash
 npm run build
 npm run lint
+npm run test
 ```
 
-上线或接入后端前，建议保证以上两个命令都通过。
+上线或接入后端前，建议保证以上三个命令都通过。`npm run test` 会运行 vitest，验证前端 mock 数据格式、类型守卫逻辑等（详见 `src/__tests__/` 下的 `data-format.test.ts` 和 `validators.test.ts`，共 56 个测试）。
 
 ## ISBN 查询排查
 
-如果页面提示“尚未读取到 Google Books API Key”，按顺序检查：
+如果页面提示"尚未读取到 Google Books API Key"，按顺序检查：
 
 1. `.env.local` 是否在 `jl-shiyi-h5` 项目根目录。
 2. 变量名是否完全是 `VITE_GOOGLE_BOOKS_API_KEY`。
@@ -67,21 +68,22 @@ Google Books API Key 属于前端可见配置，上线后建议在 Google Cloud 
 
 ## 当前已实现
 
-- 书城列表：搜索、分类筛选、校区/学院/专业叠加筛选、排序、响应式卡片
-- 书籍详情：联系方式隐私门槛、想买、留言、举报
+- 书城列表：搜索、分类筛选、校区/学院/专业叠加筛选、排序、响应式卡片、按销售状态筛选（全部状态 / 在售 / 已预定 / 已售出）
+- 书籍详情：联系方式隐私门槛、想买、留言、举报、关键操作时间戳展示（买家想买时间、卖家同意成交时间）
 - 发布书籍：Google Books ISBN 查询、图片 URL、本地多图选择与预览；除数量外，其余内容均可为空；不强制默认图片
 - 我的书籍：状态切换、下架操作
 - 个人资料编辑
 - 自定义账号演示登录，账号由中文、英文、数字组成且不超过 60 个字符，用户资料保存到后端
 - 发布、想买、留言、成交确认、评价、举报保存到 MySQL/RDS
+- 数据格式单元测试（vitest，56 个测试覆盖 AppData 形状验证与各字段格式约束）
 
 ## 安全配置
 
-真实 OSS AccessKey、ECS 密码、数据库密码等隐私信息不能写入源码或提交到 GitHub。配置规则见 [SECURITY.md](SECURITY.md)。
+真实 OSS AccessKey、ECS 密码、数据库密码、webhook 密钥等隐私信息不能写入源码或提交到 GitHub。配置规则见 [SECURITY.md](SECURITY.md)。
 
 ## 图片上传说明
 
-“选择本地图片”支持一次选择多张，前端不设置照片数量上限。生产环境会通过后端接口 `POST /api/uploads/images` 上传到阿里云 OSS，并把 OSS 返回的图片 URL 放入书籍图片列表。
+"选择本地图片"支持一次选择多张，前端不设置照片数量上限。生产环境会通过后端接口 `POST /api/uploads/images` 上传到阿里云 OSS，并把 OSS 返回的图片 URL 放入书籍图片列表。
 
 本地开发时，如果只启动 `npm run dev` 而没有启动后端服务，图片上传会失败并先加入本地预览；需要另开一个终端运行 `npm start`，或部署到 ECS 后通过同一个 Node 服务访问。
 
@@ -120,6 +122,8 @@ MYSQL_PORT=3306
 MYSQL_DATABASE=jl_shiyi_app
 MYSQL_USER=jl_shiyi_app
 MYSQL_PASSWORD=你的RDS密码
+DEPLOY_WEBHOOK_PORT=9000
+DEPLOY_WEBHOOK_SECRET=你设定的webhook密钥
 ```
 
 不要把真实 `.env` 提交到 Git。
@@ -233,19 +237,19 @@ C:\wwwroot\JL-shiyi-H5     # Nginx/IIS 可能正在对外服务的静态目录
 
 Node 服务使用 `PORT=8080`，H5 页面和上传 API 都通过同一个服务访问：页面是 `http://<ECS_PUBLIC_IP>:8080/`，上传接口是 `http://<ECS_PUBLIC_IP>:8080/api/uploads/images`。
 
-### 开启自动同步
+### Webhook 自动部署（推荐）
 
-想要更接近自动部署，可以在 ECS 上执行一次：
+本项目已实现 CI → CD webhook 自动部署链路，替代旧的 5 分钟轮询方案。代码推送到 GitHub `main` 分支后，CI 通过 lint、测试、构建，然后触发 ECS 上的 webhook 自动拉取、构建并重启服务。
+
+在 ECS 上启动 webhook 服务：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/sb679/JL-shiyi-H5/main/scripts/windows-ecs-enable-auto-update.ps1 -OutFile $env:TEMP\jl-shiyi-enable-auto-update.ps1; & $env:TEMP\jl-shiyi-enable-auto-update.ps1"
+powershell -ExecutionPolicy Bypass -File C:\jl-shiyi-h5\scripts\windows-ecs-enable-auto-update.ps1
 ```
 
-它会创建 Windows 计划任务，每 5 分钟自动从 GitHub 检查一次更新。之后你在本地改代码并推送到 GitHub，ECS 会自动拉取、构建并重启服务。
+脚本会创建 Windows 计划任务启动 webhook（`server/deploy-webhook.js`），监听 `DEPLOY_WEBHOOK_PORT`（默认 9000）接收 GitHub Actions 的 POST 请求。该端口需要在阿里云安全组中放行入方向 TCP 9000。
 
-脚本创建计划任务后会立刻执行一次更新；后续即使 GitHub 没有新提交，也会检查服务健康状态，必要时停止 nginx 并重启 Node 服务接管 `8080`。
-
-更稳的长期方案是 GitHub Actions + 自托管 Runner，但当前阶段用计划任务已经能避免手动复制粘贴源码。
+Webhook 收到验证通过的请求后，在 ECS 上执行 `git pull origin main → npm ci → npm run build → wwwroot 同步 → pm2 restart`，审计日志写入 `deploy-audit.log`。
 
 ## Git 使用建议
 
@@ -262,22 +266,47 @@ git push -u origin main
 
 ## CI/CD 说明
 
-本项目现在包含 GitHub Actions CI：每次推送到 `main` 或创建指向 `main` 的 Pull Request 时，会自动执行：
+本项目通过 GitHub Actions 实现 CI → CD 自动部署链路（`.github/workflows/ci.yml`）：
+
+### CI 阶段
+
+每次推送到 `main` 或创建指向 `main` 的 Pull Request 时自动执行。流程分两个 Job：
+
+| Job | 步骤 |
+|-----|------|
+| **test** | `npm ci` → `npm run lint` → `npm run test -- --run` |
+| **build** | `npm ci` → `npm run build` → 上传 dist artifact |
+
+- **为什么 `build` 依赖 `test`**：lint 或测试未通过时不应构建，避免将有问题的代码标记为"可部署"。
+- **为什么 CI 阶段加 `npm run test`**：单元测试成本低、反馈快，在 CI 中跑能防止字段格式退化。
+
+### CD 阶段（webhook 部署）
+
+CI 的 `build` job 通过后，`deploy` job 向 ECS 发送 webhook：
 
 ```text
-npm ci
-npm run lint
-npm run build
+curl -X POST http://<ECS_HOST>:9000/deploy \
+  -H "Authorization: Bearer <DEPLOY_WEBHOOK_SECRET>"
 ```
 
-CI 的作用是确认提交到 GitHub 的代码能安装、能 lint、能构建。CI 不会读取本机还没推送的代码，所以本地修改后仍需要把代码提交并推送到 GitHub。
+ECS 上的 webhook 服务（`server/deploy-webhook.js`）收到请求后依次执行 `git pull origin main → npm ci → npm run build → wwwroot 同步 → pm2 restart`。
 
-如果 ECS 已运行 `scripts/windows-ecs-enable-auto-update.ps1`，云端会每 5 分钟检查 GitHub，一旦发现 `main` 有新提交，就会自动拉取、构建、同步 `dist` 并重启 Node 服务。
+- **为什么 webhook 替代了 5 分钟轮询**：轮询有延迟且有资源消耗；webhook 是事件驱动，CI 通过后立即触发，部署效率和一致性更高。
+- **为什么 webhook 要求 Bearer token 而非 IP 白名单**：GitHub Actions 出口 IP 是动态的，IP 白名单不可行；token 校验简单且安全。
 
-本地可以用下面的一键脚本减少手动步骤：
+### GitHub Actions 所需的 Secrets
+
+在仓库 Settings → Secrets and variables → Actions 中配置：
+
+| Secret | 说明 |
+|--------|------|
+| `ECS_HOST` | ECS 公网 IP |
+| `DEPLOY_WEBHOOK_SECRET` | 与 ECS `.env` 中的值一致 |
+
+### 本地一键发布
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-local-release.ps1 "你的提交说明"
 ```
 
-这个脚本会在本地依次执行构建、lint、`git add .`、`git commit` 和 `git push origin main`。推送完成后，GitHub Actions 会自动跑 CI；ECS 的 5 分钟计划任务会负责云端更新。
+这个脚本在本地依次执行构建、lint、`git add .`、`git commit` 和 `git push origin main`。推送后 GitHub Actions 自动跑 CI，通过后自动触发 webhook 部署到 ECS。
