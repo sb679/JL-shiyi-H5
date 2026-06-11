@@ -102,6 +102,7 @@ img { display: block; max-width: 100%; }
 .status-badge.available { color: #166534; background: #dcfce7; }
 .status-badge.reserved { color: #9a3412; background: #ffedd5; }
 .status-badge.sold, .status-badge.removed { color: #475569; background: #e2e8f0; }
+.stock-mini { color: var(--primary-strong); font-weight: 700; font-size: 0.84rem; }
 .message-hint { color: var(--accent); font-size: 0.86rem; }
 .card-action { margin: 0 12px 12px auto; display: flex; align-items: center; gap: 6px; border: 0; background: transparent; cursor: pointer; }
 .text-danger { color: var(--danger); }
@@ -128,6 +129,61 @@ img { display: block; max-width: 100%; }
 .contact-box div { display: grid; gap: 3px; }
 .closed-note, .privacy-note { color: var(--muted); }
 .buyer-list { display: grid; gap: 8px; }
+
+/* ---- Status segmented & interest row ---- */
+.status-segmented { margin-top: 2px; }
+.interest-highlight { color: var(--accent); font-weight: 800; }
+.interest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbfc;
+}
+.interest-row .secondary-button { flex: 1; }
+
+/* ---- Image thumbs (detail page) ---- */
+.thumb-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
+.thumb-row button { padding: 0; border: 2px solid transparent; border-radius: 8px; overflow: hidden; background: transparent; cursor: pointer; }
+.thumb-row button.active { border-color: var(--primary); }
+.thumb-row img { width: 44px; height: 44px; object-fit: cover; border-radius: 4px; }
+
+/* ---- Profile avatar ---- */
+.profile-avatar-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+}
+.avatar-upload-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--primary-strong);
+  font-weight: 700;
+  cursor: pointer;
+}
+.avatar-upload-label input { display: none; }
+.avatar-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.note-text { color: var(--muted); font-size: 0.86rem; }
 
 .message-list { display: grid; gap: 8px; max-height: 320px; overflow: auto; padding-right: 4px; }
 .message-bubble { width: fit-content; max-width: 78%; padding: 9px 11px; border-radius: 8px; background: #f1f5f9; }
@@ -203,6 +259,56 @@ img { display: block; max-width: 100%; }
 .bottom-nav a { justify-content: center; gap: 4px; min-height: 64px; flex-direction: column; color: var(--muted); font-size: 0.78rem; }
 .bottom-nav a.active { color: var(--primary-strong); font-weight: 800; }
 .desktop-only { display: flex; }
+
+/* ---- Admin page ---- */
+.admin-table { padding: 16px; }
+.admin-table-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.admin-table-header h2 { margin: 0; font-size: 1.1rem; }
+.admin-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.admin-row:first-child { border-top: 0; }
+.admin-row-info { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.admin-row-info strong { color: var(--ink); }
+.admin-row-info span { color: var(--muted); word-break: break-all; }
+.admin-row-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.admin-remove-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.admin-empty { text-align: center; padding: 24px 0; }
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.status-badge.pending { color: #9a3412; background: #ffedd5; }
+.status-badge.reviewing { color: #1e40af; background: #dbeafe; }
+.status-badge.resolved { color: #166534; background: #dcfce7; }
+.status-badge.rejected { color: #475569; background: #e2e8f0; }
 
 @media (max-width: 760px) {
   .content-wrap { padding-top: 18px; }

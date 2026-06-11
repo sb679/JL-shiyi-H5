@@ -13,13 +13,15 @@ import {
   Plus,
   Search,
   Send,
+  Settings,
+  ShieldAlert,
   ShieldCheck,
   Star,
   Trash2,
   UserRound,
 } from 'lucide-react';
 import { campusConfig, currentUserSeed, seedData } from './mockData';
-import type { AppData, Book, BookCategory, BookCondition, BookStatus, Evaluation, User } from './types';
+import type { AppData, Book, BookCategory, BookCondition, BookStatus, Evaluation, Report, User } from './types';
 
 const queryClient = new QueryClient();
 const GOOGLE_BOOKS_API_KEY = ((import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined) || '').trim();
@@ -34,6 +36,7 @@ const DEFAULT_BOOK_TITLE = '未填写书名';
 const DEFAULT_BOOK_AUTHOR = '未填写作者';
 const CHINESE_ONLY_PATTERN = /^[\u4e00-\u9fff]*$/;
 const ACCOUNT_PATTERN = /^[A-Za-z0-9\u4e00-\u9fff]{1,60}$/;
+const ADMIN_IDENTIFIERS = ['admin'];
 const locationFieldLabels = {
   campus: '校区',
   department: '学部',
@@ -66,6 +69,13 @@ const statusLabels: Record<BookStatus, string> = {
 const roleLabels: Record<Evaluation['fromRole'], string> = {
   buyer: '买家评价',
   seller: '卖家评价',
+};
+
+const reportStatusLabels: Record<Report['status'], string> = {
+  pending: '待处理',
+  reviewing: '审核中',
+  resolved: '已处理',
+  rejected: '已驳回',
 };
 
 type PublishDraft = {
@@ -139,12 +149,13 @@ function localUserId(identifier: string) {
   return `local_${Math.abs(hash)}`;
 }
 
-function createLocalUser(identifier: string): User {
+function createLocalUser(identifier: string, role: User['role'] = 'user'): User {
   return {
     ...currentUserSeed,
     id: localUserId(identifier),
     loginIdentifier: identifier,
     nickname: identifier,
+    role,
   };
 }
 
@@ -290,6 +301,8 @@ function useAppState() {
   const [remoteReady, setRemoteReady] = useState(false);
   const userById = (id?: string) => data.users.find((item) => item.id === id);
   const activeInterests = (bookId: string) => data.interests.filter((item) => item.bookId === bookId && item.status === 'active');
+  const chosenQuantity = (bookId: string) => data.interests.filter((item) => item.bookId === bookId && item.status === 'chosen').reduce((sum, item) => sum + item.quantity, 0);
+  const hasChosenInterest = (bookId: string, userId: string) => data.interests.some((item) => item.bookId === bookId && item.buyerId === userId && item.status === 'chosen');
 
   useEffect(() => {
     let alive = true;
@@ -329,15 +342,16 @@ function useAppState() {
   async function login(identifier: string) {
     const loginIdentifier = identifier.trim();
     validateAccount(loginIdentifier);
+    const role = ADMIN_IDENTIFIERS.includes(loginIdentifier) ? 'admin' as const : 'user' as const;
     if (remoteReady) {
-      const result = await requestJson<{ user: User }>('/api/login', { method: 'POST', body: JSON.stringify({ identifier: loginIdentifier }) });
+      const result = await requestJson<{ user: User }>('/api/login', { method: 'POST', body: JSON.stringify({ identifier: loginIdentifier, role }) });
       const nextData = await requestJson<AppData>('/api/state');
       setUser(result.user);
       setData(nextData);
       writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, user: result.user });
       return;
     }
-    const localUser = createLocalUser(loginIdentifier);
+    const localUser = createLocalUser(loginIdentifier, role);
     setUser(localUser);
     setData((current) => ({
       ...current,
@@ -392,6 +406,7 @@ function useAppState() {
       department: draft.department.trim(),
       college: draft.college.trim(),
       major: draft.major.trim(),
+      buyerIds: [],
       status: 'available',
       createdAt: now,
       updatedAt: now,
@@ -400,20 +415,23 @@ function useAppState() {
     return book.id;
   }
 
-  async function expressInterest(book: Book) {
+  async function expressInterest(book: Book, quantity: number) {
     if (!user) throw new Error('请先登录');
     if (remoteReady) {
-      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/interests`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }));
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/interests`, { method: 'POST', body: JSON.stringify({ userId: user.id, quantity }) }));
       return;
     }
     if (book.sellerId === user.id) throw new Error('不能购买自己发布的书籍');
-    if (book.status !== 'available') throw new Error('这本书当前不可购买');
-    if (data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id)) return;
-    const nextCount = activeInterests(book.id).length + 1;
+    if (book.status !== 'available' && book.status !== 'reserved') throw new Error('这本书当前不可购买');
+    if (hasChosenInterest(book.id, user.id)) throw new Error('你已经购买过这本书，不能重复下单');
+    if (data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id && item.status === 'active')) return;
+    const totalChosen = chosenQuantity(book.id);
+    const remaining = book.quantity - totalChosen;
+    if (remaining <= 0) throw new Error('库存已售罄');
+    const qty = Math.max(1, Math.min(quantity, remaining));
     setData((current) => ({
       ...current,
-      interests: [...current.interests, { id: createId('interest'), bookId: book.id, buyerId: user.id, status: 'active', createdAt: new Date().toISOString() }],
-      books: current.books.map((item) => (item.id === book.id ? { ...item, status: nextCount >= item.quantity ? 'reserved' : 'available', updatedAt: new Date().toISOString() } : item)),
+      interests: [...current.interests, { id: createId('interest'), bookId: book.id, buyerId: user.id, quantity: qty, status: 'active', createdAt: new Date().toISOString() }],
     }));
   }
 
@@ -423,11 +441,31 @@ function useAppState() {
       await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/confirm-sold`, { method: 'POST', body: JSON.stringify({ userId: user.id, buyerId }) }));
       return;
     }
-    setData((current) => ({
-      ...current,
-      books: current.books.map((item) => (item.id === book.id ? { ...item, status: 'sold', buyerId, soldAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : item)),
-      interests: current.interests.map((item) => (item.bookId === book.id && item.buyerId === buyerId ? { ...item, status: 'chosen' } : item)),
-    }));
+    setData((current) => {
+      const interest = current.interests.find((item) => item.bookId === book.id && item.buyerId === buyerId && item.status === 'active');
+      const chosenQty = interest?.quantity || 1;
+      const totalAlreadyChosen = current.interests.filter((item) => item.bookId === book.id && item.status === 'chosen').reduce((sum, item) => sum + item.quantity, 0);
+      const remainingAfterThis = book.quantity - totalAlreadyChosen - chosenQty;
+      const now = new Date().toISOString();
+      return {
+        ...current,
+        books: current.books.map((item) => {
+          if (item.id !== book.id) return item;
+          return {
+            ...item,
+            buyerIds: [...item.buyerIds, buyerId],
+            status: remainingAfterThis <= 0 ? 'sold' as const : 'available' as const,
+            soldAt: remainingAfterThis <= 0 ? now : item.soldAt,
+            updatedAt: now,
+          };
+        }),
+        interests: current.interests.map((item) => {
+          if (item.bookId === book.id && item.buyerId === buyerId) return { ...item, status: 'chosen' as const };
+          if (item.bookId === book.id && item.status === 'active' && remainingAfterThis <= 0) return { ...item, status: 'cancelled' as const };
+          return item;
+        }),
+      };
+    });
   }
 
   async function removeBook(book: Book) {
@@ -439,6 +477,30 @@ function useAppState() {
     setData((current) => ({
       ...current,
       books: current.books.map((item) => (item.id === book.id ? { ...item, status: 'removed', updatedAt: new Date().toISOString() } : item)),
+    }));
+  }
+
+  async function adminRemoveBook(book: Book) {
+    if (!user || user.role !== 'admin') throw new Error('只有管理员可以强制下架');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/books/${book.id}/remove`, { method: 'POST', body: JSON.stringify({ userId: user.id, admin: true }) }));
+      return;
+    }
+    setData((current) => ({
+      ...current,
+      books: current.books.map((item) => (item.id === book.id ? { ...item, status: 'removed', updatedAt: new Date().toISOString() } : item)),
+    }));
+  }
+
+  async function updateReportStatus(report: Report, status: Report['status']) {
+    if (!user || user.role !== 'admin') throw new Error('只有管理员可以处理举报');
+    if (remoteReady) {
+      await replaceWithRemoteState(requestJson<AppData>(`/api/reports/${report.id}`, { method: 'PUT', body: JSON.stringify({ userId: user.id, status }) }));
+      return;
+    }
+    setData((current) => ({
+      ...current,
+      reports: current.reports.map((item) => (item.id === report.id ? { ...item, status } : item)),
     }));
   }
 
@@ -465,7 +527,7 @@ function useAppState() {
       return;
     }
     const isSeller = book.sellerId === user.id;
-    const isBuyer = book.buyerId === user.id;
+    const isBuyer = data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id && item.status === 'chosen');
     if (!isSeller && !isBuyer) throw new Error('只有交易双方可以评价');
     if (data.evaluations.some((item) => item.bookId === book.id && item.fromUserId === user.id)) throw new Error('你已经评价过这笔交易');
     setData((current) => ({
@@ -476,7 +538,7 @@ function useAppState() {
           id: createId('eval'),
           bookId: book.id,
           fromUserId: user.id,
-          toUserId: isSeller ? book.buyerId || '' : book.sellerId,
+          toUserId: isSeller ? '' : book.sellerId,
           fromRole: isSeller ? 'seller' : 'buyer',
           rating,
           comment,
@@ -509,7 +571,7 @@ function useAppState() {
     }
   }
 
-  return { user, data, userById, activeInterests, login, updateUser, publishBook, expressInterest, confirmSold, removeBook, sendMessage, submitEvaluation, submitReport, refreshData };
+  return { user, data, userById, activeInterests, login, updateUser, publishBook, expressInterest, confirmSold, removeBook, adminRemoveBook, updateReportStatus, sendMessage, submitEvaluation, submitReport, refreshData };
 }
 
 type AppState = ReturnType<typeof useAppState>;
@@ -522,13 +584,15 @@ function UserAvatar({ user, size = 20 }: { user?: User | null; size?: number }) 
 }
 
 function Shell({ state }: { state: AppState }) {
+  const isAdmin = state.user?.role === 'admin';
   return (
     <div className="app-shell">
       <header className="topbar">
         <Link to="/books" className="brand" aria-label="返回书城"><BookOpen size={24} /><span>JL拾遗</span></Link>
         <div className="topbar-actions">
           <Link className="icon-button" to="/publish" aria-label="发布书籍" title="发布书籍"><Plus size={20} /></Link>
-          <Link className="profile-chip" to="/me/books"><UserAvatar user={state.user} size={18} /><span>{state.user?.nickname || '去登录'}</span></Link>
+          {isAdmin && <Link className="profile-chip" to="/admin" title="管理面板"><Settings size={18} /><span>管理</span></Link>}
+          <Link className="profile-chip" to="/me/books"><UserAvatar user={state.user} size={18} /><span>{state.user?.role === 'admin' ? `admin → 管理` : state.user?.nickname || '去登录'}</span></Link>
         </div>
       </header>
       <main className="content-wrap">
@@ -537,6 +601,7 @@ function Shell({ state }: { state: AppState }) {
           <Route path="/books" element={<MallPage state={state} />} />
           <Route path="/books/:bookId" element={<DetailPage state={state} />} />
           <Route path="/publish" element={<PublishPage state={state} />} />
+          <Route path="/admin" element={<AdminPage state={state} />} />
           <Route path="/me/books" element={<MyBooksPage state={state} />} />
           <Route path="/me/profile" element={<ProfilePage state={state} />} />
           <Route path="/login" element={<LoginPage state={state} />} />
@@ -545,9 +610,84 @@ function Shell({ state }: { state: AppState }) {
       <nav className="bottom-nav">
         <NavLink to="/books"><Home size={20} /><span>书城</span></NavLink>
         <NavLink to="/publish"><Plus size={20} /><span>发布</span></NavLink>
+        {isAdmin && <NavLink to="/admin"><Settings size={20} /><span>管理</span></NavLink>}
         <NavLink to="/me/books"><UserRound size={20} /><span>我的</span></NavLink>
       </nav>
     </div>
+  );
+}
+
+function AdminPage({ state }: { state: AppState }) {
+  const [tab, setTab] = useState<'reports' | 'books'>('reports');
+  const [notice, setNotice] = useState('');
+  const user = state.user;
+  if (!user || user.role !== 'admin') {
+    return <div className="empty-state"><ShieldAlert size={36} /><h2>需要管理员权限</h2><p>请使用管理员账号登录后访问此页面。</p><Link className="primary-button" to="/login">去登录</Link></div>;
+  }
+  const pendingReports = state.data.reports.filter((r) => r.status === 'pending');
+  const allReports = state.data.reports;
+  const allBooks = [...state.data.books].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  async function run(action: () => void | Promise<void>, ok: string) {
+    try { await action(); setNotice(ok); } catch (error) { setNotice(error instanceof Error ? error.message : '操作失败'); }
+  }
+  return (
+    <section className="page-stack">
+      <div className="section-head compact-head"><div><p className="eyebrow">管理面板</p><h1>举报审核 & 全站书籍管理</h1></div></div>
+      {notice && <div className="toast">{notice}<button onClick={() => setNotice('')} type="button">关闭</button></div>}
+      <div className="segmented"><button className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')} type="button"><Flag size={16} /> 举报管理{pendingReports.length > 0 && <span className="admin-badge">{pendingReports.length}</span>}</button><button className={tab === 'books' ? 'active' : ''} onClick={() => setTab('books')} type="button"><BookOpen size={16} /> 全站书籍</button></div>
+      {tab === 'reports' && (
+        <div className="page-stack">
+          <div className="admin-table surface-panel">
+            <div className="admin-table-header"><h2>待处理举报 ({pendingReports.length})</h2></div>
+            {pendingReports.length === 0 && <p className="subtle admin-empty">暂无待处理举报。</p>}
+            {pendingReports.map((report) => {
+              const reporter = state.userById(report.reporterId);
+              const book = state.data.books.find((b) => b.id === report.targetId);
+              return (
+                <div key={report.id} className="admin-row">
+                  <div className="admin-row-info"><strong>举报人：{reporter?.nickname || '未知用户'}</strong><span>被举报书籍：{book?.title || '已删除'}</span><span>原因：{report.reason}</span><span>详情：{report.detail}</span><span className="subtle">{formatDate(report.createdAt)}</span></div>
+                  <div className="admin-row-actions">
+                    <button className="secondary-button" onClick={() => run(() => state.updateReportStatus(report, 'resolved'), '已标记为已处理')} type="button"><Check size={16} /> 标记已处理</button>
+                    <button className="ghost-button" onClick={() => run(() => state.updateReportStatus(report, 'rejected'), '已驳回该举报')} type="button">驳回</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {allReports.length > 0 && (
+            <div className="admin-table surface-panel">
+              <div className="admin-table-header"><h2>全部举报记录 ({allReports.length})</h2></div>
+              {allReports.map((report) => {
+                const reporter = state.userById(report.reporterId);
+                const book = state.data.books.find((b) => b.id === report.targetId);
+                return (
+                  <div key={`all-${report.id}`} className="admin-row">
+                    <div className="admin-row-info"><strong>举报人：{reporter?.nickname || '未知'}</strong><span>书籍：{book?.title || '已删除'}</span><span>{report.detail}</span><span className="subtle">{formatDate(report.createdAt)}</span></div>
+                    <span className={`status-badge ${report.status}`}>{reportStatusLabels[report.status]}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+      {tab === 'books' && (
+        <div className="admin-table surface-panel">
+          <div className="admin-table-header"><h2>全站书籍 ({allBooks.length})</h2></div>
+          {allBooks.length === 0 && <p className="subtle admin-empty">暂无书籍。</p>}
+          {allBooks.map((book) => {
+            const seller = state.userById(book.sellerId);
+            return (
+              <div key={book.id} className="admin-row">
+                <div className="admin-row-info"><strong>{book.title}</strong><span>作者：{book.author} · {formatPrice(book.priceCents)}</span><span>发布者：{seller?.nickname || '未知'} · {locationPath(book)}</span><span className="subtle">{formatDate(book.createdAt)}</span></div>
+                <span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span>
+                {book.status !== 'removed' && <button className="text-danger admin-remove-btn" onClick={() => run(() => state.adminRemoveBook(book), '已强制下架书籍')} type="button"><Trash2 size={16} /> 强制下架</button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -591,8 +731,9 @@ function MallPage({ state }: { state: AppState }) {
       <div className="section-head compact-head"><div><p className="eyebrow">校园二手书</p><h1>找到课程用书，也把闲置书传下去</h1></div><Link className="primary-button desktop-only" to="/publish"><Plus size={18} /> 发布书籍</Link></div>
       <div className="toolbar surface-panel">
         <label className="search-box"><Search size={18} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索书名、作者或 ISBN" /></label>
-        <div className="filter-row"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序方式"><option value="latest">最新发布</option><option value="price">价格最低</option></select><select value={saleStatus} onChange={(event) => setSaleStatus(event.target.value as BookStatus | 'all')} aria-label="销售状态"><option value="all">全部状态</option><option value="available">在售</option><option value="reserved">已预定</option><option value="sold">已售出</option></select></div>
+        <div className="filter-row"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序方式"><option value="latest">最新发布</option><option value="price">价格最低</option></select></div>
         <div className="segmented">{(Object.keys(categoryLabels) as Array<BookCategory | 'all'>).map((key) => <button key={key} className={category === key ? 'active' : ''} onClick={() => setCategory(key)} type="button">{categoryLabels[key]}</button>)}</div>
+        <div className="segmented status-segmented"><button className={saleStatus === 'available' ? 'active' : ''} onClick={() => setSaleStatus('available')} type="button">在售</button><button className={saleStatus === 'reserved' ? 'active' : ''} onClick={() => setSaleStatus('reserved')} type="button">等待确认</button><button className={saleStatus === 'sold' ? 'active' : ''} onClick={() => setSaleStatus('sold')} type="button">已售出</button></div>
         <div className="location-filters">
           <select value={campus} onChange={(event) => { setCampus(event.target.value); setDepartment('all'); setCollege('all'); setMajor('all'); }} aria-label="校区筛选"><option value="all">全部校区</option>{locationOptions.campuses.map((item) => <option key={item} value={item}>{item}</option>)}</select>
           <select value={department} onChange={(event) => { setDepartment(event.target.value); setCollege('all'); setMajor('all'); }} aria-label="学部筛选"><option value="all">全部学部</option>{locationOptions.departments.map((item) => <option key={item} value={item}>{item}</option>)}</select>
@@ -601,21 +742,34 @@ function MallPage({ state }: { state: AppState }) {
           <button className="ghost-button" type="button" onClick={clearLocation}>清空校区筛选</button>
         </div>
       </div>
-      <div className="book-grid">{books.map((book) => <BookCard key={book.id} book={book} state={state} />)}</div>
+      <div className="book-grid">{books.map((book) => <BookCard key={book.id} book={book} state={state} view="mall" />)}</div>
       {books.length === 0 && <EmptyState title="没有找到符合条件的书" text="换个关键词、分类、校区、学部、学院或专业再试试。" />}
     </section>
   );
 }
 
-function BookCard({ book, state, mine, onRemove }: { book: Book; state: AppState; mine?: boolean; onRemove?: () => void }) {
+function BookCard({ book, state, mine, onRemove, view }: { book: Book; state: AppState; mine?: boolean; onRemove?: () => void; view?: 'mall' | 'mine' }) {
   const seller = state.userById(book.sellerId);
-  const count = state.activeInterests(book.id).length;
+  const chosenBuyers = state.data.interests.filter((item) => item.bookId === book.id && item.status === 'chosen');
+  const totalChosen = chosenBuyers.reduce((sum, item) => sum + item.quantity, 0);
+  const activeCount = state.activeInterests(book.id).length;
   const extraImages = Math.max(book.images.length - 1, 0);
+  const isMall = view === 'mall' || (!mine && !view);
+  let cardMetaRight: React.ReactNode;
+  if (mine) {
+    cardMetaRight = <span>{formatDate(book.updatedAt)}</span>;
+  } else if (isMall && book.status === 'sold') {
+    cardMetaRight = <span>成交于 {formatDate(book.soldAt || book.updatedAt)} · {totalChosen}本</span>;
+  } else if (isMall && book.status === 'reserved') {
+    cardMetaRight = <span className="interest-highlight">{activeCount} 人想买</span>;
+  } else {
+    cardMetaRight = <span>{maskName(seller?.nickname || '同学')}</span>;
+  }
   return (
     <article className="book-card">
       <Link to={`/books/${book.id}`} className="book-card-main">
         <div className="book-cover-wrap">{book.images[0]?.url ? <img src={book.images[0].url} alt={book.title} /> : <div className="no-cover"><BookOpen size={26} /><span>无图片</span></div>}{extraImages > 0 && <span className="image-count">+{extraImages}</span>}</div>
-        <div className="book-card-body"><div className="card-title-line"><h2>{book.title}</h2><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span></div><p>{book.author}</p><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span>{book.campus && <span>{book.campus}</span>}{book.department && <span>{book.department}</span>}</div><div className="card-meta"><strong>{formatPrice(book.priceCents)}</strong><span>{count} 人想买</span><span>{mine ? formatDate(book.updatedAt) : maskName(seller?.nickname || '同学')}</span></div>{book.lastMessageAt && <div className="message-hint">最近留言 {formatDate(book.lastMessageAt)}</div>}</div>
+        <div className="book-card-body"><div className="card-title-line"><h2>{book.title}</h2><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span></div><p>{book.author}</p><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span>{book.campus && <span>{book.campus}</span>}{book.department && <span>{book.department}</span>}</div>{book.status !== 'sold' && isMall && <div className="stock-mini">剩余 {book.quantity - totalChosen} 本 / 共 {book.quantity} 本</div>}<div className="card-meta"><strong>{formatPrice(book.priceCents)}</strong><span>{activeCount} 人想买</span>{cardMetaRight}</div>{book.lastMessageAt && <div className="message-hint">最近留言 {formatDate(book.lastMessageAt)}</div>}</div>
       </Link>
       {onRemove && <button className="text-danger card-action" onClick={onRemove} type="button"><Trash2 size={16} /> 下架</button>}
     </article>
@@ -627,21 +781,28 @@ function DetailPage({ state }: { state: AppState }) {
   const navigate = useNavigate();
   const [notice, setNotice] = useState('');
   const [showContact, setShowContact] = useState(false);
+  const [showQuantityModal, setShowQuantityModal] = useState(false);
   const [message, setMessage] = useState('');
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
   const [reportDetail, setReportDetail] = useState('');
   const [selectedImage, setSelectedImage] = useState(0);
+  const [buyQuantity, setBuyQuantity] = useState(1);
   const book = state.data.books.find((item) => item.id === bookId);
   if (!book) return <EmptyState title="没有找到这本书" text="链接可能已经失效。" />;
   const user = state.user;
   const seller = state.userById(book.sellerId);
   const isOwner = user?.id === book.sellerId;
-  const hasInterest = Boolean(user && state.data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id));
+  const hasInterest = Boolean(user && state.data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id && item.status === 'active'));
+  const hasEverBought = Boolean(user && state.data.interests.some((item) => item.bookId === book.id && item.buyerId === user.id && item.status === 'chosen'));
   const interests = state.activeInterests(book.id);
+  const chosenBuyers = state.data.interests.filter((item) => item.bookId === book.id && item.status === 'chosen');
   const messages = state.data.messages.filter((item) => item.bookId === book.id);
   const evaluations = state.data.evaluations.filter((item) => item.bookId === book.id);
-  const canReview = Boolean(user && book.status === 'sold' && (book.sellerId === user.id || book.buyerId === user.id));
+  const canReview = Boolean(user && book.status === 'sold' && (book.sellerId === user.id || chosenBuyers.some((item) => item.buyerId === user.id)));
+  const remainingStock = book.quantity - chosenBuyers.reduce((sum, item) => sum + item.quantity, 0);
+  function handleBuyClick() { setBuyQuantity(1); setShowQuantityModal(true); }
+  function confirmBuy() { void run(() => state.expressInterest(book!, buyQuantity), '已记录想买，联系方式已解锁').then(() => { setShowQuantityModal(false); setShowContact(true); }); }
   const activeBook = book;
   const currentImage = book.images[selectedImage]?.url || book.images[0]?.url;
   async function run(action: () => void | Promise<void>, ok: string) {
@@ -666,7 +827,7 @@ function DetailPage({ state }: { state: AppState }) {
       <div className="detail-media surface-panel">{currentImage ? <img src={currentImage} alt={book.title} /> : <div className="no-cover large"><BookOpen size={40} /><span>暂无图片</span></div>}{book.images.length > 1 && <div className="thumb-row">{book.images.map((image, index) => <button className={selectedImage === index ? 'active' : ''} key={image.id} onClick={() => setSelectedImage(index)} type="button"><img src={image.url} alt={`${book.title} 图片 ${index + 1}`} /></button>)}</div>}</div>
       <div className="detail-main page-stack">
         <section className="surface-panel detail-summary"><div className="card-title-line"><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span><span className="subtle">{formatDate(book.createdAt)}</span></div><h1>{book.title}</h1><p className="lead-text">{book.author}{book.isbn ? ` · ISBN ${book.isbn}` : ''}</p><div className="price-line">{formatPrice(book.priceCents)}</div><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span><span>{interests.length} 人想买</span></div><p className="book-description">{book.description}</p><div className="seller-box"><UserAvatar user={seller} size={32} /><div><strong>{seller?.nickname || '同学'}</strong><span>{locationPath(book)}</span></div></div></section>
-        <section className="surface-panel action-panel"><h2>交易操作</h2>{user && !isOwner && !hasInterest && book.status === 'available' && <button className="primary-button full-width" onClick={() => void run(() => state.expressInterest(book), '已记录想买，联系方式已解锁').then(() => setShowContact(true))} type="button"><Check size={18} /> 我想买</button>}{user && !isOwner && hasInterest && <button className="secondary-button full-width" onClick={() => setShowContact(true)} type="button"><ShieldCheck size={18} /> 查看联系方式</button>}{!user && <Link className="primary-button full-width" to="/login"><LogIn size={18} /> 登录后联系卖家</Link>}{book.status === 'sold' && book.soldAt && <div className="info-banner"><Check size={18} /><span>已于 {formatDate(book.soldAt)} 成交</span></div>}{isOwner && book.status !== 'sold' && interests.map((interest) => <div key={interest.id} className="interest-row"><button className="secondary-button" onClick={() => void run(() => state.confirmSold(book, interest.buyerId), '已确认成交')} type="button">确认卖给 {state.userById(interest.buyerId)?.nickname || '买家'}</button><span className="subtle">想买于 {formatDate(interest.createdAt)}</span></div>)}{(showContact || isOwner) && user && (hasInterest || isOwner) && <div className="contact-box"><ShieldCheck size={18} /><div><span>已授权查看联系方式</span><strong>{book.contact}</strong></div></div>}</section>
+<section className="surface-panel action-panel"><h2>交易操作</h2><div className="stock-display">剩余 {remainingStock} 本 / 共 {book.quantity} 本</div>{user && !isOwner && !hasInterest && !hasEverBought && (book.status === 'available' || book.status === 'reserved') && remainingStock > 0 && <button className="primary-button full-width" onClick={handleBuyClick} type="button"><Check size={18} /> 我想买</button>}{user && !isOwner && hasInterest && <button className="secondary-button full-width" onClick={() => setShowContact(true)} type="button"><ShieldCheck size={18} /> 查看联系方式</button>}{user && hasEverBought && <div className="info-banner"><Check size={18} /><span>你已购买此书</span></div>}{!user && <Link className="primary-button full-width" to="/login"><LogIn size={18} /> 登录后联系卖家</Link>}{book.status === 'sold' && book.soldAt && chosenBuyers.length > 0 && <div className="info-banner"><Check size={18} /><span>所有库存已于 {formatDate(book.soldAt)} 全部成交</span></div>}{isOwner && book.status !== 'sold' && interests.map((interest) => <div key={interest.id} className="interest-row"><UserAvatar user={state.userById(interest.buyerId)} size={24} /><button className="secondary-button" onClick={() => void run(() => state.confirmSold(book, interest.buyerId), '已确认成交')} type="button">确认卖给 {state.userById(interest.buyerId)?.nickname || '买家'} {interest.quantity} 本</button><span className="subtle">想买于 {formatDate(interest.createdAt)}</span></div>)}{chosenBuyers.length > 0 && <div className="chosen-buyers-section"><h3>已成交买家</h3>{chosenBuyers.map((item) => <div key={item.id} className="chosen-buyer-row"><UserAvatar user={state.userById(item.buyerId)} size={24} /><span>{state.userById(item.buyerId)?.nickname || '同学'} · {item.quantity} 本</span></div>)}</div>}{(showContact || isOwner) && user && (hasInterest || isOwner) && <div className="contact-box"><ShieldCheck size={18} /><div><span>已授权查看联系方式</span><strong>{book.contact}</strong></div></div>}{showQuantityModal && <div className="modal-overlay" onClick={() => setShowQuantityModal(false)}><div className="modal-content" onClick={(e) => e.stopPropagation()}><h3>选择购买数量</h3><p>剩余 {remainingStock} 本 / 共 {book.quantity} 本</p><div className="quantity-picker"><button type="button" onClick={() => setBuyQuantity(Math.max(1, buyQuantity - 1))} disabled={buyQuantity <= 1}>−</button><span className="qty-value">{buyQuantity}</span><button type="button" onClick={() => setBuyQuantity(Math.min(remainingStock, buyQuantity + 1))} disabled={buyQuantity >= remainingStock}>+</button></div><div className="modal-actions"><button className="secondary-button" onClick={() => setShowQuantityModal(false)} type="button">取消</button><button className="primary-button" onClick={confirmBuy} type="button">确认购买 {buyQuantity} 本</button></div></div></div>}</section>
         {(isOwner || hasInterest) && <section className="surface-panel message-panel"><h2>留言沟通</h2><div className="message-list">{messages.map((item) => <div key={item.id} className={`message-bubble ${item.fromUserId === user?.id ? 'mine' : ''}`}><p>{item.content}</p><span>{formatDate(item.createdAt)}</span></div>)}</div>{book.status !== 'sold' && <form className="inline-form" onSubmit={handleMessage}><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="询问书况、交易地点或时间" /><button className="icon-button solid" type="submit" aria-label="发送留言"><Send size={18} /></button></form>}</section>}
         <section className="surface-panel review-panel"><h2>交易评价</h2>{evaluations.length === 0 && <p className="subtle">暂无评价。</p>}{evaluations.map((item) => <ReviewItem key={item.id} evaluation={item} />)}{canReview && <form className="review-form" onSubmit={handleReview}><label>评分<input type="range" min="1" max="5" value={rating} onChange={(event) => setRating(Number(event.target.value))} /><span>{rating} 星</span></label><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="写下这次交易体验" /><button className="secondary-button" type="submit"><Star size={16} /> 提交评价</button></form>}</section>
         <section className="surface-panel report-panel"><h2><Flag size={18} /> 举报</h2><form className="compact-form" onSubmit={handleReport}><textarea value={reportDetail} onChange={(event) => setReportDetail(event.target.value)} placeholder="可补充虚假信息、骚扰或其他问题" /><button className="ghost-button" type="submit">提交举报</button></form></section>
@@ -896,7 +1057,7 @@ function ProfilePage({ state }: { state: AppState }) {
     }
   }
   return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}>
-    <div className="profile-avatar-section"><UserAvatar user={draft} size={64} /><label className="avatar-upload-label"><ImagePlus size={16} /> 更换头像<input type="file" accept="image/*" onChange={handleAvatarUpload} /></label>{avatarNote && <span className="note-text">{avatarNote}</span>}</div>
+    <div className="profile-avatar-section"><UserAvatar user={draft} size={64} /><label className="avatar-upload-label"><ImagePlus size={16} /> 更换头像<input type="file" accept="image/*" onChange={handleAvatarUpload} /></label>{draft.avatarUrl && <button className="text-danger avatar-delete-btn" type="button" onClick={() => { setDraft((current) => current && { ...current, avatarUrl: undefined }); setAvatarNote('头像已移除，保存后生效。'); }}><Trash2 size={14} /> 删除头像</button>}{avatarNote && <span className="note-text">{avatarNote}</span>}</div>
     <label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input list="profile-campus-options" value={draft.campus || ''} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="profile-department-options" value={draft.department || ''} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="profile-college-options" value={draft.college || ''} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="profile-major-options" value={draft.major || ''} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label><datalist id="profile-campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
 }
 
