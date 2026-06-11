@@ -514,6 +514,13 @@ function useAppState() {
 
 type AppState = ReturnType<typeof useAppState>;
 
+function UserAvatar({ user, size = 20 }: { user?: User | null; size?: number }) {
+  if (user?.avatarUrl) {
+    return <img src={user.avatarUrl} alt={user.nickname} className="avatar-img" style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover' }} />;
+  }
+  return <CircleUserRound size={size} />;
+}
+
 function Shell({ state }: { state: AppState }) {
   return (
     <div className="app-shell">
@@ -521,7 +528,7 @@ function Shell({ state }: { state: AppState }) {
         <Link to="/books" className="brand" aria-label="返回书城"><BookOpen size={24} /><span>JL拾遗</span></Link>
         <div className="topbar-actions">
           <Link className="icon-button" to="/publish" aria-label="发布书籍" title="发布书籍"><Plus size={20} /></Link>
-          <Link className="profile-chip" to="/me/books"><CircleUserRound size={18} /><span>{state.user?.nickname || '去登录'}</span></Link>
+          <Link className="profile-chip" to="/me/books"><UserAvatar user={state.user} size={18} /><span>{state.user?.nickname || '去登录'}</span></Link>
         </div>
       </header>
       <main className="content-wrap">
@@ -572,7 +579,7 @@ function MallPage({ state }: { state: AppState }) {
       .filter((book) => major === 'all' || book.major === major)
       .filter((book) => !q || [book.title, book.author, book.isbn].some((value) => value?.toLowerCase().includes(q)))
       .sort((a, b) => (sort === 'price' ? a.priceCents - b.priceCents : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-  }, [campus, category, department, college, keyword, major, sort, state.data.books]);
+  }, [campus, category, department, college, keyword, major, sort, saleStatus, state.data.books]);
   function clearLocation() {
     setCampus('all');
     setDepartment('all');
@@ -658,7 +665,7 @@ function DetailPage({ state }: { state: AppState }) {
       {notice && <div className="toast">{notice}<button onClick={() => setNotice('')} type="button">关闭</button></div>}
       <div className="detail-media surface-panel">{currentImage ? <img src={currentImage} alt={book.title} /> : <div className="no-cover large"><BookOpen size={40} /><span>暂无图片</span></div>}{book.images.length > 1 && <div className="thumb-row">{book.images.map((image, index) => <button className={selectedImage === index ? 'active' : ''} key={image.id} onClick={() => setSelectedImage(index)} type="button"><img src={image.url} alt={`${book.title} 图片 ${index + 1}`} /></button>)}</div>}</div>
       <div className="detail-main page-stack">
-        <section className="surface-panel detail-summary"><div className="card-title-line"><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span><span className="subtle">{formatDate(book.createdAt)}</span></div><h1>{book.title}</h1><p className="lead-text">{book.author}{book.isbn ? ` · ISBN ${book.isbn}` : ''}</p><div className="price-line">{formatPrice(book.priceCents)}</div><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span><span>{interests.length} 人想买</span></div><p className="book-description">{book.description}</p><div className="seller-box"><CircleUserRound size={32} /><div><strong>{seller?.nickname || '同学'}</strong><span>{locationPath(book)}</span></div></div></section>
+        <section className="surface-panel detail-summary"><div className="card-title-line"><span className={`status-badge ${book.status}`}>{statusLabels[book.status]}</span><span className="subtle">{formatDate(book.createdAt)}</span></div><h1>{book.title}</h1><p className="lead-text">{book.author}{book.isbn ? ` · ISBN ${book.isbn}` : ''}</p><div className="price-line">{formatPrice(book.priceCents)}</div><div className="tag-row"><span>{categoryLabels[book.category]}</span><span>{conditionLabels[book.condition]}</span><span>{interests.length} 人想买</span></div><p className="book-description">{book.description}</p><div className="seller-box"><UserAvatar user={seller} size={32} /><div><strong>{seller?.nickname || '同学'}</strong><span>{locationPath(book)}</span></div></div></section>
         <section className="surface-panel action-panel"><h2>交易操作</h2>{user && !isOwner && !hasInterest && book.status === 'available' && <button className="primary-button full-width" onClick={() => void run(() => state.expressInterest(book), '已记录想买，联系方式已解锁').then(() => setShowContact(true))} type="button"><Check size={18} /> 我想买</button>}{user && !isOwner && hasInterest && <button className="secondary-button full-width" onClick={() => setShowContact(true)} type="button"><ShieldCheck size={18} /> 查看联系方式</button>}{!user && <Link className="primary-button full-width" to="/login"><LogIn size={18} /> 登录后联系卖家</Link>}{book.status === 'sold' && book.soldAt && <div className="info-banner"><Check size={18} /><span>已于 {formatDate(book.soldAt)} 成交</span></div>}{isOwner && book.status !== 'sold' && interests.map((interest) => <div key={interest.id} className="interest-row"><button className="secondary-button" onClick={() => void run(() => state.confirmSold(book, interest.buyerId), '已确认成交')} type="button">确认卖给 {state.userById(interest.buyerId)?.nickname || '买家'}</button><span className="subtle">想买于 {formatDate(interest.createdAt)}</span></div>)}{(showContact || isOwner) && user && (hasInterest || isOwner) && <div className="contact-box"><ShieldCheck size={18} /><div><span>已授权查看联系方式</span><strong>{book.contact}</strong></div></div>}</section>
         {(isOwner || hasInterest) && <section className="surface-panel message-panel"><h2>留言沟通</h2><div className="message-list">{messages.map((item) => <div key={item.id} className={`message-bubble ${item.fromUserId === user?.id ? 'mine' : ''}`}><p>{item.content}</p><span>{formatDate(item.createdAt)}</span></div>)}</div>{book.status !== 'sold' && <form className="inline-form" onSubmit={handleMessage}><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="询问书况、交易地点或时间" /><button className="icon-button solid" type="submit" aria-label="发送留言"><Send size={18} /></button></form>}</section>}
         <section className="surface-panel review-panel"><h2>交易评价</h2>{evaluations.length === 0 && <p className="subtle">暂无评价。</p>}{evaluations.map((item) => <ReviewItem key={item.id} evaluation={item} />)}{canReview && <form className="review-form" onSubmit={handleReview}><label>评分<input type="range" min="1" max="5" value={rating} onChange={(event) => setRating(Number(event.target.value))} /><span>{rating} 星</span></label><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="写下这次交易体验" /><button className="secondary-button" type="submit"><Star size={16} /> 提交评价</button></form>}</section>
@@ -679,6 +686,7 @@ function PublishPage({ state }: { state: AppState }) {
   const [isbnLoading, setIsbnLoading] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
+  const composingRef = useRef(false);
   useEffect(() => {
     writeStorage(PUBLISH_DRAFT_STORAGE_KEY, draft);
   }, [draft]);
@@ -780,7 +788,6 @@ function PublishPage({ state }: { state: AppState }) {
   function addImageUrl() {
     setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, ''] }));
   }
-  const composingRef = useRef(false);
   function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) {
     setField(key, composingRef.current ? value : keepChineseOnly(value));
   }
@@ -840,13 +847,15 @@ function MyBooksPage({ state }: { state: AppState }) {
   const [status, setStatus] = useState<BookStatus>('available');
   if (!state.user) return <LoginRequired />;
   const myBooks = state.data.books.filter((book) => book.sellerId === state.user?.id && book.status === status);
-  return <section className="page-stack"><div className="profile-panel surface-panel"><CircleUserRound size={44} /><div><h1>{state.user.nickname}</h1><p>{locationPath(state.user)}</p></div><button className="secondary-button" onClick={() => navigate('/me/profile')} type="button">编辑资料</button></div><div className="segmented sticky-tabs">{(['available', 'sold', 'removed'] as BookStatus[]).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)} type="button">{statusLabels[item]}</button>)}</div><div className="book-grid">{myBooks.map((book) => <BookCard key={book.id} book={book} state={state} mine onRemove={book.status !== 'sold' ? () => { void state.removeBook(book); } : undefined} />)}</div>{myBooks.length === 0 && <EmptyState title="这里还没有书" text="发布一本闲置书后会出现在这里。" />}</section>;
+  return <section className="page-stack"><div className="profile-panel surface-panel"><UserAvatar user={state.user} size={44} /><div><h1>{state.user.nickname}</h1><p>{locationPath(state.user)}</p></div><button className="secondary-button" onClick={() => navigate('/me/profile')} type="button">编辑资料</button></div><div className="segmented sticky-tabs">{(['available', 'sold', 'removed'] as BookStatus[]).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)} type="button">{statusLabels[item]}</button>)}</div><div className="book-grid">{myBooks.map((book) => <BookCard key={book.id} book={book} state={state} mine onRemove={book.status !== 'sold' ? () => { void state.removeBook(book); } : undefined} />)}</div>{myBooks.length === 0 && <EmptyState title="这里还没有书" text="发布一本闲置书后会出现在这里。" />}</section>;
 }
 
 function ProfilePage({ state }: { state: AppState }) {
   const navigate = useNavigate();
   const [draft, setDraft] = useState<User | null>(state.user);
+  const [avatarNote, setAvatarNote] = useState('');
   const [, setComposingLocationField] = useState<keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'> | null>(null);
+  const composingRef = useRef(false);
   if (!draft) return <LoginRequired />;
   const locationSuggestions = {
     campuses: uniqueValues([draft.campus, ...state.data.books.map((book) => book.campus), ...campusConfig.campuses.map((item) => item.name)]),
@@ -854,7 +863,6 @@ function ProfilePage({ state }: { state: AppState }) {
     colleges: uniqueValues([draft.college, ...state.data.books.map((book) => book.college), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.map((college) => college.name)))]),
     majors: uniqueValues([draft.major, ...state.data.books.map((book) => book.major), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.flatMap((college) => college.majors)))]),
   };
-  const composingRef = useRef(false);
   function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) {
     setDraft((current) => current && { ...current, [key]: composingRef.current ? value : keepChineseOnly(value) });
   }
@@ -863,7 +871,33 @@ function ProfilePage({ state }: { state: AppState }) {
     setComposingLocationField(null);
     setDraft((current) => current && { ...current, [key]: keepChineseOnly(event.currentTarget.value) });
   }
-  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input list="profile-campus-options" value={draft.campus || ''} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="profile-department-options" value={draft.department || ''} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="profile-college-options" value={draft.college || ''} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="profile-major-options" value={draft.major || ''} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label><datalist id="profile-campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
+  async function handleAvatarUpload(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+    const imageFile = files.find((file) => file.type.startsWith('image/'));
+    if (!imageFile) { setAvatarNote('请选择图片文件。'); return; }
+    event.target.value = '';
+    setAvatarNote('正在上传头像...');
+    try {
+      const urls = await uploadImagesToOss([imageFile]);
+      if (urls.length > 0) {
+        setDraft((current) => current && { ...current, avatarUrl: urls[0] });
+        setAvatarNote('头像上传成功，保存后生效。');
+      }
+    } catch (error) {
+      try {
+        const dataUrl = await readFileAsDataUrl(imageFile);
+        setDraft((current) => current && { ...current, avatarUrl: dataUrl });
+        const reason = error instanceof Error ? error.message : '头像上传失败';
+        setAvatarNote(`${reason} 已先使用本地预览，仍可保存。`);
+      } catch {
+        setAvatarNote(error instanceof Error ? error.message : '头像上传失败，请稍后重试。');
+      }
+    }
+  }
+  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}>
+    <div className="profile-avatar-section"><UserAvatar user={draft} size={64} /><label className="avatar-upload-label"><ImagePlus size={16} /> 更换头像<input type="file" accept="image/*" onChange={handleAvatarUpload} /></label>{avatarNote && <span className="note-text">{avatarNote}</span>}</div>
+    <label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input list="profile-campus-options" value={draft.campus || ''} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="profile-department-options" value={draft.department || ''} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="profile-college-options" value={draft.college || ''} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="profile-major-options" value={draft.major || ''} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label><datalist id="profile-campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
 }
 
 function LoginPage({ state }: { state: AppState }) {
