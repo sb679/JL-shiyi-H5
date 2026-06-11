@@ -548,6 +548,7 @@ function MallPage({ state }: { state: AppState }) {
   const [keyword, setKeyword] = useState('');
   const [category, setCategory] = useState<BookCategory | 'all'>('all');
   const [sort, setSort] = useState('latest');
+  const [saleStatus, setSaleStatus] = useState<BookStatus | 'all'>('available');
   const [campus, setCampus] = useState('all');
   const [department, setDepartment] = useState('all');
   const [college, setCollege] = useState('all');
@@ -561,8 +562,9 @@ function MallPage({ state }: { state: AppState }) {
   }, [campus, department, college, state.data.books]);
   const books = useMemo(() => {
     const q = keyword.trim().toLowerCase();
+    const statusValues: BookStatus[] = saleStatus === 'all' ? ['available', 'reserved', 'sold'] : [saleStatus as BookStatus];
     return state.data.books
-      .filter((book) => book.status === 'available' || book.status === 'reserved')
+      .filter((book) => statusValues.includes(book.status))
       .filter((book) => category === 'all' || book.category === category)
       .filter((book) => campus === 'all' || book.campus === campus)
       .filter((book) => department === 'all' || book.department === department)
@@ -582,7 +584,7 @@ function MallPage({ state }: { state: AppState }) {
       <div className="section-head compact-head"><div><p className="eyebrow">校园二手书</p><h1>找到课程用书，也把闲置书传下去</h1></div><Link className="primary-button desktop-only" to="/publish"><Plus size={18} /> 发布书籍</Link></div>
       <div className="toolbar surface-panel">
         <label className="search-box"><Search size={18} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索书名、作者或 ISBN" /></label>
-        <div className="filter-row"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序方式"><option value="latest">最新发布</option><option value="price">价格最低</option></select></div>
+        <div className="filter-row"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序方式"><option value="latest">最新发布</option><option value="price">价格最低</option></select><select value={saleStatus} onChange={(event) => setSaleStatus(event.target.value as BookStatus | 'all')} aria-label="销售状态"><option value="all">全部状态</option><option value="available">在售</option><option value="reserved">已预定</option><option value="sold">已售出</option></select></div>
         <div className="segmented">{(Object.keys(categoryLabels) as Array<BookCategory | 'all'>).map((key) => <button key={key} className={category === key ? 'active' : ''} onClick={() => setCategory(key)} type="button">{categoryLabels[key]}</button>)}</div>
         <div className="location-filters">
           <select value={campus} onChange={(event) => { setCampus(event.target.value); setDepartment('all'); setCollege('all'); setMajor('all'); }} aria-label="校区筛选"><option value="all">全部校区</option>{locationOptions.campuses.map((item) => <option key={item} value={item}>{item}</option>)}</select>
