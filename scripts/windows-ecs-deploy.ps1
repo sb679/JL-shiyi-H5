@@ -1,0 +1,154 @@
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
+param()
+
+$ErrorActionPreference = 'Stop'
+
+$RepoUrl = 'https://github.com/sb679/JL-shiyi-H5.git'
+$InstallDir = 'C:\jl-shiyi-h5'
+$PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
+$TaskName = 'JL拾遗 H5 Server'
+
+function EnsureCommandAvailable($Name, $InstallHint) {
+  if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+    throw "$Name is not installed. $InstallHint"
+  }
+}
+
+function Read-Required($Prompt) {
+  do {
+    $Value = Read-Host $Prompt
+  } while ([string]::IsNullOrWhiteSpace($Value))
+  return $Value.Trim()
+}
+
+function Read-RequiredSecret($Prompt) {
+  do {
+    $SecureValue = Read-Host $Prompt -AsSecureString
+    $Pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureValue)
+    try {
+      $Value = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Pointer)
+    } finally {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Pointer)
+    }
+  } while ([string]::IsNullOrWhiteSpace($Value))
+  return $Value.Trim()
+}
+
+function Write-Section($Text) {
+  Write-Host "`n== $Text ==" -ForegroundColor Cyan
+}
+
+function Sync-PublicMirror($InstallDir, $PublicMirrorDir) {
+  if (-not (Test-Path $PublicMirrorDir)) {
+    return
+  }
+
+  Write-Section 'Syncing public wwwroot mirror'
+  $SourceDist = Join-Path $InstallDir 'dist'
+  $TargetDist = Join-Path $PublicMirrorDir 'dist'
+
+  if (Test-Path $TargetDist) {
+    Remove-Item $TargetDist -Recurse -Force
+  }
+
+  New-Item -ItemType Directory -Path $TargetDist -Force | Out-Null
+  Copy-Item (Join-Path $SourceDist '*') $TargetDist -Recurse -Force
+  Copy-Item (Join-Path $SourceDist 'index.html') (Join-Path $PublicMirrorDir 'index.html') -Force
+  if (Test-Path (Join-Path $PublicMirrorDir 'assets')) {
+    Remove-Item (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
+  }
+  if (Test-Path (Join-Path $SourceDist 'assets')) {
+    Copy-Item (Join-Path $SourceDist 'assets') (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
+  }
+  Write-Host "Public mirror updated: $TargetDist" -ForegroundColor Green
+}
+
+Write-Section 'Checking tools'
+EnsureCommandAvailable git 'Install Git for Windows first: https://git-scm.com/download/win'
+EnsureCommandAvailable node 'Install Node.js 20 LTS first: https://nodejs.org/'
+EnsureCommandAvailable npm 'Install Node.js 20 LTS first: https://nodejs.org/'
+
+Write-Section 'Preparing project directory'
+if (Test-Path $InstallDir) {
+  Set-Location $InstallDir
+  git fetch origin main
+  git reset --hard origin/main
+} else {
+  git clone $RepoUrl $InstallDir
+  Set-Location $InstallDir
+}
+
+Write-Section 'Writing local environment file'
+$OssRegion = Read-Required 'OSS_REGION, for example oss-cn-hangzhou'
+$OssBucket = Read-Required 'OSS_BUCKET'
+$OssAccessKeyId = Read-Required 'OSS_ACCESS_KEY_ID'
+$OssAccessKeySecret = Read-RequiredSecret 'OSS_ACCESS_KEY_SECRET'
+$OssPublicBaseUrl = Read-Host 'OSS_PUBLIC_BASE_URL, press Enter to auto-generate'
+if ([string]::IsNullOrWhiteSpace($OssPublicBaseUrl)) {
+  $OssPublicBaseUrl = "https://$OssBucket.$OssRegion.aliyuncs.com"
+}
+$Port = Read-Host 'Node/API/Web PORT, press Enter to use 8080'
+if ([string]::IsNullOrWhiteSpace($Port)) {
+  $Port = '8080'
+}
+$MysqlHost = Read-Host 'MYSQL_HOST / RDS endpoint, press Enter to use rm-bp15742960i2w1hh8.mysql.rds.aliyuncs.com'
+if ([string]::IsNullOrWhiteSpace($MysqlHost)) {
+  $MysqlHost = 'rm-bp15742960i2w1hh8.mysql.rds.aliyuncs.com'
+}
+$MysqlPort = Read-Host 'MYSQL_PORT, press Enter to use 3306'
+if ([string]::IsNullOrWhiteSpace($MysqlPort)) {
+  $MysqlPort = '3306'
+}
+$MysqlDatabase = Read-Host 'MYSQL_DATABASE, press Enter to use jl_shiyi_app'
+if ([string]::IsNullOrWhiteSpace($MysqlDatabase)) {
+  $MysqlDatabase = 'jl_shiyi_app'
+}
+$MysqlUser = Read-Host 'MYSQL_USER, press Enter to use jl_shiyi_app'
+if ([string]::IsNullOrWhiteSpace($MysqlUser)) {
+  $MysqlUser = 'jl_shiyi_app'
+}
+$MysqlPassword = Read-RequiredSecret 'MYSQL_PASSWORD / RDS password'
+
+$EnvContent = @"
+PORT=$Port
+OSS_REGION=$OssRegion
+OSS_BUCKET=$OssBucket
+OSS_ACCESS_KEY_ID=$OssAccessKeyId
+OSS_ACCESS_KEY_SECRET=$OssAccessKeySecret
+OSS_PUBLIC_BASE_URL=$OssPublicBaseUrl
+UPLOAD_MAX_FILE_SIZE=8388608
+UPLOAD_MAX_FILES=30
+MYSQL_HOST=$MysqlHost
+MYSQL_PORT=$MysqlPort
+MYSQL_DATABASE=$MysqlDatabase
+MYSQL_USER=$MysqlUser
+MYSQL_PASSWORD=$MysqlPassword
+"@
+Set-Content -Path (Join-Path $InstallDir '.env') -Value $EnvContent -Encoding UTF8
+
+Write-Section 'Installing dependencies and building app'
+npm ci
+npm run build
+Sync-PublicMirror $InstallDir $PublicMirrorDir
+
+Write-Section 'Configuring firewall'
+New-NetFirewallRule -DisplayName "JL拾遗 H5 API $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -ErrorAction SilentlyContinue | Out-Null
+
+Write-Section 'Registering startup task'
+$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\scripts\start-server.ps1`""
+$Trigger = New-ScheduledTaskTrigger -AtStartup
+$Principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
+
+Write-Section 'Starting server now'
+Stop-Process -Name node -Force -ErrorAction SilentlyContinue
+Start-ScheduledTask -TaskName $TaskName
+Start-Sleep -Seconds 3
+
+try {
+  Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
+  Write-Host "`nDeployment finished. Open page: http://<ECS_PUBLIC_IP>:8080/ ; upload API: http://<ECS_PUBLIC_IP>:$Port/api/uploads/images" -ForegroundColor Green
+} catch {
+  Write-Host "Server task was created, but health check failed. Check Task Scheduler and logs." -ForegroundColor Yellow
+  throw
+}
