@@ -64,7 +64,9 @@ jobs:
     steps:
       - name: Trigger deploy webhook
         run: |
-          curl -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
+          WEBHOOK_URL="http://${{ secrets.ECS_HOST }}:9000/deploy"
+          echo "Triggering deploy webhook at $WEBHOOK_URL"
+          curl -f -s -X POST "$WEBHOOK_URL" \
             -H "Authorization: Bearer ${{ secrets.DEPLOY_WEBHOOK_SECRET }}" \
             -H "Content-Type: application/json" \
-            -d '{"ref":"${{ github.ref }}","sha":"${{ github.sha }}"}'
+            -d '{"ref":"${{ github.ref }}","sha":"${{ github.sha }}","timestamp":"${{ github.event.head_commit.timestamp }}"}'
