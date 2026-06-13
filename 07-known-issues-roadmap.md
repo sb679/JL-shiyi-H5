@@ -7,6 +7,16 @@
 
 ## 1. 已知 Bug
 
+### B0. 代码未推送导致 ECS 部署不生效（部署）🆕
+
+| 项目 | 内容 |
+|------|------|
+| **严重程度** | **极高**（2026-06-11 已修复） |
+| **位置** | 整个 Git 仓库 |
+| **问题** | 1. 所有新功能代码从未 commit（`git status` 显示全部 `??`）<br>2. 从未配置 remote（`git remote -v` 为空）<br>3. `jl-shiyi-h5` 因嵌套 `.git` 被识别为 submodule，GitHub 只存储指针<br>4. 本地工作在 `feature/trade-status-display` 分支，但 CI 只监听 `main` |
+| **影响** | ECS 运行的是几周前的旧版本，管理员面板、头像上传、资料编辑等新功能均未生效 |
+| **建议** | 1. **首次提交前创建 `.gitignore`**<br>2. **add → commit → push 到 CI 监听的分支**<br>3. **不要嵌套 Git 仓库**（子目录有 `.git` 会导致外层将其视为 submodule）<br>4. **push 后验证**：`git log --oneline -5`、`git ls-files -s <关键目录>`（应显示 `100644` 而非 `160000`） |
+
 ### B1. 详情页 contact 字段直接暴露（安全）
 
 | 项目 | 内容 |

@@ -218,9 +218,84 @@
 
 ---
 
-## 7. 知识补充
+## 7. Git 提交与推送——部署的必要前提
 
-### 7.1 开发者工具快捷操作
+### 7.1 常见误区
+
+| 误区 | 实际情况 |
+|------|---------|
+| "代码在本地就能部署" | 必须通过 Git 提交推送到远程仓库，CI/CD 和 ECS 才能拉取 |
+| "git push 了就能触发 CI" | CI 只在配置指定的分支上触发（如 `main`），feature 分支的 push 不会触发 |
+| "GitHub 上能看到文件就是推送成功了" | 嵌套 `.git` 的目录会被当作 submodule（mode 160000），只存指针不存代码 |
+
+### 7.2 推送前检查清单
+
+```powershell
+# 1. 确认 Git 有提交历史
+git log --oneline -3
+
+# 2. 确认 remote 已配置
+git remote -v
+
+# 3. 确认无未提交文件
+git status --short
+
+# 4. 确认子目录不是 submodule（应显示 100644 而非 160000）
+git ls-files -s jl-shiyi-h5
+
+# 5. 确认在正确分支上推送
+git branch
+
+# 6. 推送后验证远程仓库内容
+git ls-tree -r main --name-only | findstr "关键文件"
+```
+
+### 7.3 嵌套 Git 仓库问题
+
+如果项目目录内有 `.git` 子目录（例如 `jl-shiyi-h5/.git`），外层仓库 `git add` 时会将其识别为 **submodule**，只存储 commit 哈希引用，而非真实文件。GitHub 上看起来文件存在，实际只是一个指针。
+
+**解决方法**：
+```powershell
+# 1. 移除 submodule 缓存
+git rm --cached jl-shiyi-h5
+
+# 2. 删除嵌套 .git 目录
+rmdir /s /q jl-shiyi-h5\.git
+
+# 3. 重新添加为真实文件
+git add jl-shiyi-h5/
+
+# 4. 提交推送
+git commit -m "fix: 解除 submodule 嵌套"
+git push origin main
+```
+
+**验证修复**：
+```powershell
+# 应显示 100644（普通文件）而非 160000（submodule）
+git ls-files -s jl-shiyi-h5
+```
+
+### 7.4 CI/CD 触发条件
+
+GitHub Actions 的触发条件在 `.github/workflows/ci.yml` 中定义：
+
+```yaml
+on:
+  push:
+    branches: [main]  # 只有推送到 main 才会触发
+  pull_request:
+    branches: [main]  # 指向 main 的 PR 也会触发
+```
+
+如果在 `feature/xxx` 分支开发，需要：
+1. 合并到 `main` 后推送，或
+2. 直接推送到 `main`，或
+3. 创建指向 `main` 的 PR
+
+## 8. 知识补充
+
+### 8.1 开发者工具快捷操作
 
 | 快捷键 | 功能 |
 |--------|------|
@@ -231,7 +306,7 @@
 | `Ctrl + Shift + P` | 命令面板（场景值、编译模式等） |
 | `F5` | 真机调试 |
 
-### 7.2 找回关闭的面板
+### 8.2 找回关闭的面板
 
 - **场景值/编译模式面板**：`Ctrl + Shift + P` → 输入"编译模式"
 - **调试器/Console**：点击底部或右侧的"Console"标签
