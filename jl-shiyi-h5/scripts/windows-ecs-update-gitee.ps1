@@ -8,10 +8,8 @@ Write-Host @'
 '@ -ForegroundColor Cyan
 
 $InstallDir = 'C:\jl-shiyi-h5-gitee'
-$PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
 $DesiredApiPort = '8080'
-$PublicPagePort = '8080'
 
 function Write-Section($Text) {
   Write-Host "`n== $Text ==" -ForegroundColor Cyan
@@ -66,34 +64,6 @@ function Test-AppHealth($Port) {
   }
 }
 
-function Sync-PublicMirror($InstallDir, $PublicMirrorDir) {
-  if (-not (Test-Path $PublicMirrorDir)) {
-    return
-  }
-
-  Write-Section 'Syncing public wwwroot mirror'
-  $SourceDist = Join-Path $InstallDir 'dist'
-  $TargetDist = Join-Path $PublicMirrorDir 'dist'
-
-  if (-not (Test-Path $SourceDist)) {
-    throw "Build output not found: $SourceDist"
-  }
-
-  if (Test-Path $TargetDist) {
-    Remove-Item $TargetDist -Recurse -Force
-  }
-
-  New-Item -ItemType Directory -Path $TargetDist -Force | Out-Null
-  Copy-Item (Join-Path $SourceDist '*') $TargetDist -Recurse -Force
-  Copy-Item (Join-Path $SourceDist 'index.html') (Join-Path $PublicMirrorDir 'index.html') -Force
-  if (Test-Path (Join-Path $PublicMirrorDir 'assets')) {
-    Remove-Item (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
-  }
-  if (Test-Path (Join-Path $SourceDist 'assets')) {
-    Copy-Item (Join-Path $SourceDist 'assets') (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
-  }
-  Write-Host "Public mirror updated: $TargetDist" -ForegroundColor Green
-}
 
 if (-not (Test-Path $InstallDir)) {
   throw "Project directory not found: $InstallDir. Run scripts/windows-ecs-deploy-gitee.ps1 first."
@@ -127,7 +97,7 @@ if ($CurrentOrigin -notmatch 'gitee\.com') {
 Write-Host "代码来源: $CurrentOrigin" -ForegroundColor Green
 
 $CurrentCommit = git rev-parse HEAD
-git fetch origin main
+git fetch origin
 
 # 检查 fetch 是否成功
 if ($LASTEXITCODE -ne 0) {
@@ -144,15 +114,12 @@ $RemoteCommit = git rev-parse origin/main
 
 if ($CurrentCommit -eq $RemoteCommit) {
   Write-Host 'Already up to date (Gitee). No rebuild needed.' -ForegroundColor Green
-  if (Test-Path (Join-Path $InstallDir 'dist')) {
-    Sync-PublicMirror $InstallDir $PublicMirrorDir
-  }
   if (-not (Test-AppHealth $Port)) {
     Write-Host 'App health check failed. Restarting app on the configured public port.' -ForegroundColor Yellow
     Restart-App $Port $TaskName
   }
   Write-Host "`nUpdate finished (代码来源: Gitee)." -ForegroundColor Green
-  Write-Host "Open page: http://<ECS_PUBLIC_IP>:$PublicPagePort/" -ForegroundColor Yellow
+  Write-Host "Open page: http://<ECS_PUBLIC_IP>:$DesiredApiPort/" -ForegroundColor Yellow
   exit 0
 }
 
@@ -164,8 +131,8 @@ npm install
 
 Write-Section 'Building app'
 npm run build
-Sync-PublicMirror $InstallDir $PublicMirrorDir
 
+Write-Section 'Reloading Node API'
 Restart-App $Port $TaskName
-Write-Host "`nUpdate finished (代码来源: Gitee)." -ForegroundColor Green
-Write-Host "Open page: http://<ECS_PUBLIC_IP>:$PublicPagePort/" -ForegroundColor Yellow
+Write-Host "`nBuild finished. Node API serves dist/ from $InstallDir\dist" -ForegroundColor Green
+Write-Host "Open page: http://<ECS_PUBLIC_IP>:$DesiredApiPort/" -ForegroundColor Yellow
