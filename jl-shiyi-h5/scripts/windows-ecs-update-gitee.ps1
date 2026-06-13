@@ -156,18 +156,11 @@ if ($CurrentCommit -eq $RemoteCommit) {
   exit 0
 }
 
-$OldLockHash = if (Test-Path 'package-lock.json') { (Get-FileHash 'package-lock.json' -Algorithm SHA256).Hash } else { '' }
-
 Write-Section 'Pulling latest code from Gitee'
 git reset --hard origin/main
-$NewLockHash = if (Test-Path 'package-lock.json') { (Get-FileHash 'package-lock.json' -Algorithm SHA256).Hash } else { '' }
 
-if ((-not (Test-Path 'node_modules')) -or $OldLockHash -ne $NewLockHash) {
-  Write-Section 'Installing dependencies'
-  npm ci
-} else {
-  Write-Section 'Dependencies unchanged'
-}
+Write-Section 'Installing dependencies'
+npm install
 
 Write-Section 'Building app'
 npm run build
