@@ -8,10 +8,8 @@ Write-Host @'
 '@ -ForegroundColor Cyan
 
 $InstallDir = 'C:\jl-shiyi-h5-gitee'
-$PublicMirrorDir = 'C:\wwwroot\JL-shiyi-H5'
 $TaskName = 'JL拾遗 H5 Server'
 $DesiredApiPort = '8080'
-$PublicPagePort = '8080'
 
 function Write-Section($Text) {
   Write-Host "`n== $Text ==" -ForegroundColor Cyan
@@ -42,10 +40,51 @@ function Set-DotEnvValue($Path, $Name, $Value) {
   Set-Content -Path $Path -Value $NextLines -Encoding UTF8
 }
 
-function Restart-App($Port, $TaskName) {
+function Ensure-ScheduledTask($InstallDir, $TaskName) {
+  $ExpectedScript = Join-Path $InstallDir 'scripts\start-server.ps1'
+  $ExpectedWorkingDir = $InstallDir
+
+  $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  if (-not $task) {
+    Write-Host "Scheduled Task '$TaskName' not found, creating..." -ForegroundColor Yellow
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ExpectedScript`"" -WorkingDirectory $ExpectedWorkingDir
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
+    Write-Host "Scheduled Task '$TaskName' created." -ForegroundColor Green
+    return
+  }
+
+  $action = $task.Actions[0]
+  $needsFix = $false
+
+  if ($action.Arguments -notmatch [regex]::Escape($ExpectedScript)) {
+    Write-Host "Scheduled Task script path mismatch! Current: $($action.Arguments)" -ForegroundColor Yellow
+    $needsFix = $true
+  }
+
+  if ($action.WorkingDirectory -ne $ExpectedWorkingDir) {
+    Write-Host "Scheduled Task working directory mismatch! Current: $($action.WorkingDirectory)" -ForegroundColor Yellow
+    $needsFix = $true
+  }
+
+  if ($needsFix) {
+    Write-Host "Fixing Scheduled Task '$TaskName'..." -ForegroundColor Yellow
+    $newAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ExpectedScript`"" -WorkingDirectory $ExpectedWorkingDir
+    Set-ScheduledTask -TaskName $TaskName -Action $newAction | Out-Null
+    Write-Host "Scheduled Task '$TaskName' fixed: script=$ExpectedScript, workingDir=$ExpectedWorkingDir" -ForegroundColor Green
+  } else {
+    Write-Host "Scheduled Task '$TaskName' is correctly configured." -ForegroundColor Green
+  }
+}
+
+function Restart-App($Port, $TaskName, $InstallDir) {
   Write-Section 'Restarting Node API task'
   Stop-Process -Name node -Force -ErrorAction SilentlyContinue
   New-NetFirewallRule -DisplayName "JL拾遗 H5 API $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -ErrorAction SilentlyContinue | Out-Null
+
+  Ensure-ScheduledTask $InstallDir $TaskName
+
   Start-ScheduledTask -TaskName $TaskName
   Start-Sleep -Seconds 3
 
@@ -53,7 +92,7 @@ function Restart-App($Port, $TaskName) {
   try {
     Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Host
   } catch {
-    Write-Host "Node health check failed. Static wwwroot mirror may still be updated." -ForegroundColor Yellow
+    Write-Host "Node health check failed. Check C:\jl-shiyi-h5-gitee\server\index.js for errors." -ForegroundColor Yellow
   }
 }
 
@@ -64,35 +103,6 @@ function Test-AppHealth($Port) {
   } catch {
     return $false
   }
-}
-
-function Sync-PublicMirror($InstallDir, $PublicMirrorDir) {
-  if (-not (Test-Path $PublicMirrorDir)) {
-    return
-  }
-
-  Write-Section 'Syncing public wwwroot mirror'
-  $SourceDist = Join-Path $InstallDir 'dist'
-  $TargetDist = Join-Path $PublicMirrorDir 'dist'
-
-  if (-not (Test-Path $SourceDist)) {
-    throw "Build output not found: $SourceDist"
-  }
-
-  if (Test-Path $TargetDist) {
-    Remove-Item $TargetDist -Recurse -Force
-  }
-
-  New-Item -ItemType Directory -Path $TargetDist -Force | Out-Null
-  Copy-Item (Join-Path $SourceDist '*') $TargetDist -Recurse -Force
-  Copy-Item (Join-Path $SourceDist 'index.html') (Join-Path $PublicMirrorDir 'index.html') -Force
-  if (Test-Path (Join-Path $PublicMirrorDir 'assets')) {
-    Remove-Item (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
-  }
-  if (Test-Path (Join-Path $SourceDist 'assets')) {
-    Copy-Item (Join-Path $SourceDist 'assets') (Join-Path $PublicMirrorDir 'assets') -Recurse -Force
-  }
-  Write-Host "Public mirror updated: $TargetDist" -ForegroundColor Green
 }
 
 if (-not (Test-Path $InstallDir)) {
@@ -144,15 +154,12 @@ $RemoteCommit = git rev-parse origin/main
 
 if ($CurrentCommit -eq $RemoteCommit) {
   Write-Host 'Already up to date (Gitee). No rebuild needed.' -ForegroundColor Green
-  if (Test-Path (Join-Path $InstallDir 'dist')) {
-    Sync-PublicMirror $InstallDir $PublicMirrorDir
-  }
   if (-not (Test-AppHealth $Port)) {
     Write-Host 'App health check failed. Restarting app on the configured public port.' -ForegroundColor Yellow
-    Restart-App $Port $TaskName
+    Restart-App $Port $TaskName $InstallDir
   }
   Write-Host "`nUpdate finished (代码来源: Gitee)." -ForegroundColor Green
-  Write-Host "Open page: http://<ECS_PUBLIC_IP>:$PublicPagePort/" -ForegroundColor Yellow
+  Write-Host "Open page: http://<ECS_PUBLIC_IP>:$DesiredApiPort/" -ForegroundColor Yellow
   exit 0
 }
 
@@ -171,8 +178,8 @@ if ((-not (Test-Path 'node_modules')) -or $OldLockHash -ne $NewLockHash) {
 
 Write-Section 'Building app'
 npm run build
-Sync-PublicMirror $InstallDir $PublicMirrorDir
 
-Restart-App $Port $TaskName
-Write-Host "`nUpdate finished (代码来源: Gitee)." -ForegroundColor Green
-Write-Host "Open page: http://<ECS_PUBLIC_IP>:$PublicPagePort/" -ForegroundColor Yellow
+Write-Section 'Reloading Node API'
+Restart-App $Port $TaskName $InstallDir
+Write-Host "`nBuild finished. Node API serves dist/ from $InstallDir\dist" -ForegroundColor Green
+Write-Host "Open page: http://<ECS_PUBLIC_IP>:$DesiredApiPort/" -ForegroundColor Yellow
