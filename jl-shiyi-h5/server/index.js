@@ -16,6 +16,7 @@ import {
   publishBook,
   removeBook,
   sendMessage,
+  setUserPassword,
   submitEvaluation,
   submitReport,
   updateUser,
@@ -109,7 +110,11 @@ app.get('/api/state', asyncRoute(async (_request, response) => {
 }));
 
 app.post('/api/login', asyncRoute(async (request, response) => {
-  response.json({ user: await loginUser(request.body?.identifier, request.body?.role) });
+  response.json({ user: await loginUser(request.body?.identifier, request.body?.password, request.body?.role) });
+}));
+
+app.post('/api/set-password', asyncRoute(async (request, response) => {
+  response.json({ user: await setUserPassword(request.body?.identifier, request.body?.password) });
 }));
 
 app.put('/api/users/:userId', asyncRoute(async (request, response) => {

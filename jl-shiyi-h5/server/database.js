@@ -71,6 +71,14 @@ function validateAccount(identifier) {
   if (!ACCOUNT_PATTERN.test(identifier)) throw Object.assign(new Error('账号只能使用中文、英文、数字，且不超过 60 个字符'), { status: 400 });
 }
 
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+function validatePassword(password) {
+  if (!password || password.length < 6) throw Object.assign(new Error('密码至少需要 6 个字符'), { status: 400 });
+}
+
 function rowToUser(row) {
   return {
     id: row.id,
@@ -127,6 +135,7 @@ async function ensureInitialized() {
       college VARCHAR(100) NULL,
       major VARCHAR(100) NULL,
       role ENUM('user','admin') NOT NULL DEFAULT 'user',
+      password_hash VARCHAR(255) NULL,
       created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
@@ -222,6 +231,14 @@ async function ensureInitialized() {
   for (const statement of statements) {
     await db.execute(statement);
   }
+
+  // 兼容：为已有表动态添加 password_hash 列（如果不存在）
+  try {
+    await db.execute('ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NULL AFTER role');
+  } catch (e) {
+    // 列已存在则忽略
+  }
+
   initialized = true;
 }
 
@@ -260,15 +277,27 @@ export async function getState() {
   };
 }
 
-export async function loginUser(identifier, requestedRole) {
+export async function loginUser(identifier, password, requestedRole) {
   await ensureInitialized();
   const db = getPool();
   const loginIdentifier = String(identifier || '').trim();
   validateAccount(loginIdentifier);
+
   const [existing] = await db.execute('SELECT * FROM users WHERE login_identifier = ? LIMIT 1', [loginIdentifier]);
+
   if (existing.length > 0) {
-    const existingUser = rowToUser(existing[0]);
-    // 微信/账号已存在：若前端传来 admin 角色且数据库中不是，则升级
+    const row = existing[0];
+    const existingUser = rowToUser(row);
+
+    // 校验密码
+    if (row.password_hash) {
+      validatePassword(password);
+      if (hashPassword(password) !== row.password_hash) {
+        throw Object.assign(new Error('密码错误'), { status: 401 });
+      }
+    }
+
+    // 已有角色：若前端传来 admin 且数据库中不是 admin，则升级
     if (requestedRole === 'admin' && existingUser.role !== 'admin') {
       await db.execute('UPDATE users SET role = ? WHERE id = ?', ['admin', existingUser.id]);
       existingUser.role = 'admin';
@@ -276,7 +305,8 @@ export async function loginUser(identifier, requestedRole) {
     return existingUser;
   }
 
-  // 新用户：信任前端传来的角色（仅 admin 可通过）
+  // 新用户：需要设置密码
+  validatePassword(password);
   const role = requestedRole === 'admin' ? 'admin' : 'user';
   const user = {
     id: id('user'),
@@ -284,8 +314,27 @@ export async function loginUser(identifier, requestedRole) {
     nickname: loginIdentifier,
     role,
   };
-  await db.execute('INSERT INTO users (id, login_identifier, nickname, role) VALUES (?, ?, ?, ?)', [user.id, user.loginIdentifier, user.nickname, user.role]);
+  await db.execute(
+    'INSERT INTO users (id, login_identifier, nickname, role, password_hash) VALUES (?, ?, ?, ?, ?)',
+    [user.id, user.loginIdentifier, user.nickname, user.role, hashPassword(password)],
+  );
   return user;
+}
+
+export async function setUserPassword(identifier, password) {
+  await ensureInitialized();
+  const db = getPool();
+  const loginIdentifier = String(identifier || '').trim();
+  validateAccount(loginIdentifier);
+  validatePassword(password);
+
+  const [existing] = await db.execute('SELECT * FROM users WHERE login_identifier = ? LIMIT 1', [loginIdentifier]);
+  if (existing.length === 0) {
+    throw Object.assign(new Error('账号不存在'), { status: 404 });
+  }
+
+  await db.execute('UPDATE users SET password_hash = ? WHERE login_identifier = ?', [hashPassword(password), loginIdentifier]);
+  return rowToUser(existing[0]);
 }
 
 export async function updateUser(user) {
