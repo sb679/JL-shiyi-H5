@@ -277,6 +277,10 @@ export async function getState() {
   };
 }
 
+// Server-side admin identifiers — the authoritative source of truth.
+// The frontend ADMIN_IDENTIFIERS is for optimistic UI only.
+const ADMIN_IDENTIFIERS = ['admin'];
+
 export async function loginUser(identifier, password, requestedRole) {
   await ensureInitialized();
   const db = getPool();
@@ -297,17 +301,18 @@ export async function loginUser(identifier, password, requestedRole) {
       }
     }
 
-    // 已有角色：若前端传来 admin 且数据库中不是 admin，则升级
-    if (requestedRole === 'admin' && existingUser.role !== 'admin') {
+    // 服务器端判定：ADMIN_IDENTIFIERS 成员 → admin，否则保持数据库现有角色
+    const serverRole = ADMIN_IDENTIFIERS.includes(loginIdentifier) ? 'admin' : 'user';
+    if (serverRole === 'admin' && existingUser.role !== 'admin') {
       await db.execute('UPDATE users SET role = ? WHERE id = ?', ['admin', existingUser.id]);
       existingUser.role = 'admin';
     }
     return existingUser;
   }
 
-  // 新用户：需要设置密码
+  // 新用户：需要设置密码，管理员由服务器端 ADMIN_IDENTIFIERS 判定
   validatePassword(password);
-  const role = requestedRole === 'admin' ? 'admin' : 'user';
+  const role = ADMIN_IDENTIFIERS.includes(loginIdentifier) ? 'admin' : 'user';
   const user = {
     id: id('user'),
     loginIdentifier,
