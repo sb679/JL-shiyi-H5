@@ -266,8 +266,17 @@ export async function loginUser(identifier, requestedRole) {
   const loginIdentifier = String(identifier || '').trim();
   validateAccount(loginIdentifier);
   const [existing] = await db.execute('SELECT * FROM users WHERE login_identifier = ? LIMIT 1', [loginIdentifier]);
-  if (existing.length > 0) return rowToUser(existing[0]);
+  if (existing.length > 0) {
+    const existingUser = rowToUser(existing[0]);
+    // 微信/账号已存在：若前端传来 admin 角色且数据库中不是，则升级
+    if (requestedRole === 'admin' && existingUser.role !== 'admin') {
+      await db.execute('UPDATE users SET role = ? WHERE id = ?', ['admin', existingUser.id]);
+      existingUser.role = 'admin';
+    }
+    return existingUser;
+  }
 
+  // 新用户：信任前端传来的角色（仅 admin 可通过）
   const role = requestedRole === 'admin' ? 'admin' : 'user';
   const user = {
     id: id('user'),

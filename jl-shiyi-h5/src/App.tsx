@@ -36,7 +36,7 @@ const DEFAULT_BOOK_TITLE = '未填写书名';
 const DEFAULT_BOOK_AUTHOR = '未填写作者';
 const CHINESE_ONLY_PATTERN = /^[\u4e00-\u9fff]*$/;
 const ACCOUNT_PATTERN = /^[A-Za-z0-9\u4e00-\u9fff]{1,60}$/;
-const ADMIN_IDENTIFIERS = ['admin'];
+const ADMIN_IDENTIFIERS = ['admin', '兰可欣'];
 const locationFieldLabels = {
   campus: '校区',
   department: '学部',
@@ -342,16 +342,17 @@ function useAppState() {
   async function login(identifier: string) {
     const loginIdentifier = identifier.trim();
     validateAccount(loginIdentifier);
-    const role = ADMIN_IDENTIFIERS.includes(loginIdentifier) ? 'admin' as const : 'user' as const;
+    const requestedRole = ADMIN_IDENTIFIERS.includes(loginIdentifier) ? 'admin' as const : 'user' as const;
     if (remoteReady) {
-      const result = await requestJson<{ user: User }>('/api/login', { method: 'POST', body: JSON.stringify({ identifier: loginIdentifier, role }) });
+      const result = await requestJson<{ user: User }>('/api/login', { method: 'POST', body: JSON.stringify({ identifier: loginIdentifier, role: requestedRole }) });
       const nextData = await requestJson<AppData>('/api/state');
+      // 以后端返回的 role 为准（服务端可能升级老用户为 admin）
       setUser(result.user);
       setData(nextData);
       writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, user: result.user });
       return;
     }
-    const localUser = createLocalUser(loginIdentifier, role);
+    const localUser = createLocalUser(loginIdentifier, requestedRole);
     setUser(localUser);
     setData((current) => ({
       ...current,
@@ -854,38 +855,12 @@ function PublishPage({ state }: { state: AppState }) {
   if (!state.user) return <LoginRequired />;
   const lastLocation = readStorage<PublishLocation>(LAST_LOCATION_STORAGE_KEY);
   const locationSuggestions = {
-    campuses: uniqueValues([
-      draft.campus,
-      lastLocation?.campus,
-      ...state.data.books.map((book) => book.campus),
-      ...state.data.users.map((item) => item.campus),
-      ...campusConfig.campuses.map((item) => item.name),
-    ]),
-    departments: uniqueValues([
-      draft.department,
-      lastLocation?.department,
-      ...state.data.books.map((book) => book.department),
-      ...state.data.users.map((item) => item.department),
-      ...campusConfig.campuses.flatMap((campus) => campus.departments.map((department) => department.name)),
-    ]),
-    colleges: uniqueValues([
-      draft.college,
-      lastLocation?.college,
-      ...state.data.books.map((book) => book.college),
-      ...state.data.users.map((item) => item.college),
-      ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.map((college) => college.name))),
-    ]),
-    majors: uniqueValues([
-      draft.major,
-      lastLocation?.major,
-      ...state.data.books.map((book) => book.major),
-      ...state.data.users.map((item) => item.major),
-      ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.flatMap((college) => college.majors))),
-    ]),
+    campuses: uniqueValues([draft.campus, lastLocation?.campus, ...state.data.books.map((book) => book.campus), ...state.data.users.map((item) => item.campus), ...campusConfig.campuses.map((item) => item.name)]),
+    departments: uniqueValues([draft.department, lastLocation?.department, ...state.data.books.map((book) => book.department), ...state.data.users.map((item) => item.department), ...campusConfig.campuses.flatMap((campus) => campus.departments.map((department) => department.name))]),
+    colleges: uniqueValues([draft.college, lastLocation?.college, ...state.data.books.map((book) => book.college), ...state.data.users.map((item) => item.college), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.map((college) => college.name)))]),
+    majors: uniqueValues([draft.major, lastLocation?.major, ...state.data.books.map((book) => book.major), ...state.data.users.map((item) => item.major), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.flatMap((college) => college.majors)))]),
   };
-  function setField<K extends keyof PublishDraft>(key: K, value: PublishDraft[K]) {
-    setDraft((current) => ({ ...current, [key]: value }));
-  }
+  function setField<K extends keyof PublishDraft>(key: K, value: PublishDraft[K]) { setDraft((current) => ({ ...current, [key]: value })); }
   async function lookupIsbn() {
     const isbn = draft.isbn.trim();
     if (!isbn) { setNote('请先输入 ISBN。'); return; }
@@ -901,21 +876,10 @@ function PublishPage({ state }: { state: AppState }) {
       const volume = result.items?.[0]?.volumeInfo;
       if (!result.totalItems || !volume?.title) { setNote('未查询到这本书，请手动填写；系统不会自动添加默认内容。'); return; }
       const image = normalizeGoogleImage(volume.imageLinks?.thumbnail || volume.imageLinks?.smallThumbnail);
-      setDraft((current) => ({
-        ...current,
-        title: volume.title || current.title,
-        author: volume.authors?.join('、') || current.author,
-        category: classifyGoogleCategory(volume.categories),
-        description: current.description || volume.description || '',
-        imageUrls: image ? [image, ...current.imageUrls.filter((url) => url !== image)] : current.imageUrls,
-      }));
+      setDraft((current) => ({ ...current, title: volume.title || current.title, author: volume.authors?.join('、') || current.author, category: classifyGoogleCategory(volume.categories), description: current.description || volume.description || '', imageUrls: image ? [image, ...current.imageUrls.filter((url) => url !== image)] : current.imageUrls }));
       setNote('ISBN 查询成功，请继续补充价格、联系方式和书况。');
-    } catch {
-      setNote('ISBN 查询失败，请稍后重试或手动填写；系统不会自动添加默认内容。');
-    } finally {
-      window.clearTimeout(timeoutId);
-      setIsbnLoading(false);
-    }
+    } catch { setNote('ISBN 查询失败，请稍后重试或手动填写；系统不会自动添加默认内容。'); }
+    finally { window.clearTimeout(timeoutId); setIsbnLoading(false); }
   }
   async function handleLocalImages(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
@@ -935,28 +899,14 @@ function PublishPage({ state }: { state: AppState }) {
         setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, ...localUrls] }));
         const reason = error instanceof Error ? error.message : '图片上传失败';
         setNote(`${reason} 已先加入本地预览，仍可继续发布。`);
-      } catch {
-        setNote(error instanceof Error ? error.message : '图片上传失败，请稍后重试。');
-      }
+      } catch { setNote(error instanceof Error ? error.message : '图片上传失败，请稍后重试。'); }
     }
   }
-  function updateImageUrl(index: number, value: string) {
-    setDraft((current) => ({ ...current, imageUrls: current.imageUrls.map((url, itemIndex) => (itemIndex === index ? value : url)) }));
-  }
-  function removeImage(index: number) {
-    setDraft((current) => ({ ...current, imageUrls: current.imageUrls.filter((_, itemIndex) => itemIndex !== index) }));
-  }
-  function addImageUrl() {
-    setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, ''] }));
-  }
-  function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) {
-    setField(key, composingRef.current ? value : keepChineseOnly(value));
-  }
-  function finishLocationComposition(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, event: CompositionEvent<HTMLInputElement>) {
-    composingRef.current = false;
-    setComposingLocationField(null);
-    setField(key, keepChineseOnly(event.currentTarget.value));
-  }
+  function updateImageUrl(index: number, value: string) { setDraft((current) => ({ ...current, imageUrls: current.imageUrls.map((url, itemIndex) => (itemIndex === index ? value : url)) })); }
+  function removeImage(index: number) { setDraft((current) => ({ ...current, imageUrls: current.imageUrls.filter((_, itemIndex) => itemIndex !== index) })); }
+  function addImageUrl() { setDraft((current) => ({ ...current, imageUrls: [...current.imageUrls, ''] })); }
+  function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) { setField(key, composingRef.current ? value : keepChineseOnly(value)); }
+  function finishLocationComposition(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, event: CompositionEvent<HTMLInputElement>) { composingRef.current = false; setComposingLocationField(null); setField(key, keepChineseOnly(event.currentTarget.value)); }
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (publishing) return;
@@ -969,37 +919,14 @@ function PublishPage({ state }: { state: AppState }) {
     try {
       const bookId = await state.publishBook({ ...draft, imageUrls });
       setNote('发布成功！正在跳转...');
-      writeStorage(LAST_LOCATION_STORAGE_KEY, {
-        campus: draft.campus,
-        department: draft.department,
-        college: draft.college,
-        major: draft.major,
-      });
+      writeStorage(LAST_LOCATION_STORAGE_KEY, { campus: draft.campus, department: draft.department, college: draft.college, major: draft.major });
       removeStorage(PUBLISH_DRAFT_STORAGE_KEY);
       navigate(`/books/${bookId}`);
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : '发布失败，请稍后重试。');
-    } finally {
-      setPublishing(false);
-    }
+    } catch (error) { setNote(error instanceof Error ? error.message : '发布失败，请稍后重试。'); }
+    finally { setPublishing(false); }
   }
   return (
-    <section className="page-stack narrow-page"><div className="section-head"><div><p className="eyebrow">发布书籍</p><h1>把闲置书放进书城</h1></div></div>{note && <div className="inline-alert">{note}</div>}<form className="surface-panel publish-form" onSubmit={submit}>
-      <div className="isbn-row"><label>ISBN<input value={draft.isbn} onChange={(event) => setField('isbn', event.target.value)} placeholder="输入 ISBN 后查询" /></label><button className="secondary-button" disabled={isbnLoading} type="button" onClick={lookupIsbn}><Search size={16} /> {isbnLoading ? '查询中' : '查询'}</button></div>
-      <label>书名<input value={draft.title} onChange={(event) => setField('title', event.target.value)} /></label><label>作者<input value={draft.author} onChange={(event) => setField('author', event.target.value)} /></label>
-      <div className="form-grid"><label>分类<select value={draft.category} onChange={(event) => setField('category', event.target.value as BookCategory)}>{(['textbook', 'novel', 'reference', 'other'] as BookCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}</select></label><label>新旧程度<select value={draft.condition} onChange={(event) => setField('condition', event.target.value as BookCondition)}>{(Object.keys(conditionLabels) as BookCondition[]).map((item) => <option key={item} value={item}>{conditionLabels[item]}</option>)}</select></label><label>价格<input type="number" min="0" step="0.5" value={draft.priceYuan} onChange={(event) => setField('priceYuan', event.target.value)} /></label><label>数量<input type="number" min="1" max="9" value={draft.quantity} onChange={(event) => setField('quantity', Number(event.target.value))} /></label></div>
-      <div className="form-grid"><label>校区<input list="campus-options" value={draft.campus} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="department-options" value={draft.department} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="college-options" value={draft.college} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="major-options" value={draft.major} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label></div>
-      <datalist id="campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist>
-      <datalist id="department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist>
-      <datalist id="college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist>
-      <datalist id="major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist>
-      <label>联系方式<input value={draft.contact} onChange={(event) => setField('contact', event.target.value)} placeholder="微信号、手机号或邮箱" /></label>
-      <div className="privacy-note"><ShieldCheck size={16} /> 联系方式只会在买家表达想买后展示。</div>
-      <div className="image-tools"><label className="upload-button"><ImagePlus size={18} /> 选择本地图片<input multiple type="file" accept="image/*" onChange={handleLocalImages} /></label><button className="ghost-button" type="button" onClick={addImageUrl}>添加图片链接</button></div>
-      <div className="image-list">{draft.imageUrls.map((url, index) => <div className="image-editor" key={`${index}-${url.slice(0, 24)}`}><img src={url || 'https://placehold.co/240x240?text=Book'} alt={`书籍图片 ${index + 1}`} /><label>图片 {index + 1}<input value={url.startsWith('data:') ? '已选择本地图片' : url} onChange={(event) => updateImageUrl(index, event.target.value)} disabled={url.startsWith('data:')} /></label><button className="text-danger" type="button" onClick={() => removeImage(index)}>删除</button></div>)}</div>
-      <div className="upload-preview"><ImagePlus size={18} /><span>照片数量不做前端上限限制；选择本地图片后会上传到阿里云 OSS，并保存返回的图片地址。</span></div>
-      <label>描述<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} placeholder="写明书况、笔记、缺页、交易地点偏好等" /></label><button className="primary-button full-width" disabled={publishing} type="submit">{publishing ? '发布中...' : '立即发布'}</button>
-    </form></section>
+    <section className="page-stack narrow-page"><div className="section-head"><div><p className="eyebrow">发布书籍</p><h1>把闲置书放进书城</h1></div></div>{note && <div className="inline-alert">{note}</div>}<form className="surface-panel publish-form" onSubmit={submit}><div className="isbn-row"><label>ISBN<input value={draft.isbn} onChange={(event) => setField('isbn', event.target.value)} placeholder="输入 ISBN 后查询" /></label><button className="secondary-button" disabled={isbnLoading} type="button" onClick={lookupIsbn}><Search size={16} /> {isbnLoading ? '查询中' : '查询'}</button></div><label>书名<input value={draft.title} onChange={(event) => setField('title', event.target.value)} /></label><label>作者<input value={draft.author} onChange={(event) => setField('author', event.target.value)} /></label><div className="form-grid"><label>分类<select value={draft.category} onChange={(event) => setField('category', event.target.value as BookCategory)}>{(['textbook', 'novel', 'reference', 'other'] as BookCategory[]).map((item) => <option key={item} value={item}>{categoryLabels[item]}</option>)}</select></label><label>新旧程度<select value={draft.condition} onChange={(event) => setField('condition', event.target.value as BookCondition)}>{(Object.keys(conditionLabels) as BookCondition[]).map((item) => <option key={item} value={item}>{conditionLabels[item]}</option>)}</select></label><label>价格<input type="number" min="0" step="0.5" value={draft.priceYuan} onChange={(event) => setField('priceYuan', event.target.value)} /></label><label>数量<input type="number" min="1" max="9" value={draft.quantity} onChange={(event) => setField('quantity', Number(event.target.value))} /></label></div><div className="form-grid"><label>校区<input list="campus-options" value={draft.campus} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="department-options" value={draft.department} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="college-options" value={draft.college} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="major-options" value={draft.major} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label></div><datalist id="campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist><datalist id="department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist><datalist id="college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist><datalist id="major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist><label>联系方式<input value={draft.contact} onChange={(event) => setField('contact', event.target.value)} placeholder="微信号、手机号或邮箱" /></label><div className="privacy-note"><ShieldCheck size={16} /> 联系方式只会在买家表达想买后展示。</div><div className="image-tools"><label className="upload-button"><ImagePlus size={18} /> 选择本地图片<input multiple type="file" accept="image/*" onChange={handleLocalImages} /></label><button className="ghost-button" type="button" onClick={addImageUrl}>添加图片链接</button></div><div className="image-list">{draft.imageUrls.map((url, index) => <div className="image-editor" key={`${index}-${url.slice(0, 24)}`}><img src={url || 'https://placehold.co/240x240?text=Book'} alt={`书籍图片 ${index + 1}`} /><label>图片 {index + 1}<input value={url.startsWith('data:') ? '已选择本地图片' : url} onChange={(event) => updateImageUrl(index, event.target.value)} disabled={url.startsWith('data:')} /></label><button className="text-danger" type="button" onClick={() => removeImage(index)}>删除</button></div>)}</div><div className="upload-preview"><ImagePlus size={18} /><span>照片数量不做前端上限限制；选择本地图片后会上传到阿里云 OSS，并保存返回的图片地址。</span></div><label>描述<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} placeholder="写明书况、笔记、缺页、交易地点偏好等" /></label><button className="primary-button full-width" disabled={publishing} type="submit">{publishing ? '发布中...' : '立即发布'}</button></form></section>
   );
 }
 
@@ -1024,14 +951,8 @@ function ProfilePage({ state }: { state: AppState }) {
     colleges: uniqueValues([draft.college, ...state.data.books.map((book) => book.college), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.map((college) => college.name)))]),
     majors: uniqueValues([draft.major, ...state.data.books.map((book) => book.major), ...campusConfig.campuses.flatMap((campus) => campus.departments.flatMap((department) => department.colleges.flatMap((college) => college.majors)))]),
   };
-  function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) {
-    setDraft((current) => current && { ...current, [key]: composingRef.current ? value : keepChineseOnly(value) });
-  }
-  function finishLocationComposition(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, event: CompositionEvent<HTMLInputElement>) {
-    composingRef.current = false;
-    setComposingLocationField(null);
-    setDraft((current) => current && { ...current, [key]: keepChineseOnly(event.currentTarget.value) });
-  }
+  function updateLocationField(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, value: string) { setDraft((current) => current && { ...current, [key]: composingRef.current ? value : keepChineseOnly(value) }); }
+  function finishLocationComposition(key: keyof Pick<PublishDraft, 'campus' | 'department' | 'college' | 'major'>, event: CompositionEvent<HTMLInputElement>) { composingRef.current = false; setComposingLocationField(null); setDraft((current) => current && { ...current, [key]: keepChineseOnly(event.currentTarget.value) }); }
   async function handleAvatarUpload(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
@@ -1041,24 +962,17 @@ function ProfilePage({ state }: { state: AppState }) {
     setAvatarNote('正在上传头像...');
     try {
       const urls = await uploadImagesToOss([imageFile]);
-      if (urls.length > 0) {
-        setDraft((current) => current && { ...current, avatarUrl: urls[0] });
-        setAvatarNote('头像上传成功，保存后生效。');
-      }
+      if (urls.length > 0) { setDraft((current) => current && { ...current, avatarUrl: urls[0] }); setAvatarNote('头像上传成功，保存后生效。'); }
     } catch (error) {
       try {
         const dataUrl = await readFileAsDataUrl(imageFile);
         setDraft((current) => current && { ...current, avatarUrl: dataUrl });
         const reason = error instanceof Error ? error.message : '头像上传失败';
         setAvatarNote(`${reason} 已先使用本地预览，仍可保存。`);
-      } catch {
-        setAvatarNote(error instanceof Error ? error.message : '头像上传失败，请稍后重试。');
-      }
+      } catch { setAvatarNote(error instanceof Error ? error.message : '头像上传失败，请稍后重试。'); }
     }
   }
-  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}>
-    <div className="profile-avatar-section"><UserAvatar user={draft} size={64} /><label className="avatar-upload-label"><ImagePlus size={16} /> 更换头像<input type="file" accept="image/*" onChange={handleAvatarUpload} /></label>{draft.avatarUrl && <button className="text-danger avatar-delete-btn" type="button" onClick={() => { setDraft((current) => current && { ...current, avatarUrl: undefined }); setAvatarNote('头像已移除，保存后生效。'); }}><Trash2 size={14} /> 删除头像</button>}{avatarNote && <span className="note-text">{avatarNote}</span>}</div>
-    <label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input list="profile-campus-options" value={draft.campus || ''} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="profile-department-options" value={draft.department || ''} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="profile-college-options" value={draft.college || ''} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="profile-major-options" value={draft.major || ''} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label><datalist id="profile-campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
+  return <section className="page-stack narrow-page"><div className="section-head"><h1>个人资料</h1></div><form className="surface-panel publish-form" onSubmit={(event) => { event.preventDefault(); void state.updateUser(draft).then(() => navigate('/me/books')); }}><div className="profile-avatar-section"><UserAvatar user={draft} size={64} /><label className="avatar-upload-label"><ImagePlus size={16} /> 更换头像<input type="file" accept="image/*" onChange={handleAvatarUpload} /></label>{draft.avatarUrl && <button className="text-danger avatar-delete-btn" type="button" onClick={() => { setDraft((current) => current && { ...current, avatarUrl: undefined }); setAvatarNote('头像已移除，保存后生效。'); }}><Trash2 size={14} /> 删除头像</button>}{avatarNote && <span className="note-text">{avatarNote}</span>}</div><label>昵称<input value={draft.nickname} onChange={(event) => setDraft({ ...draft, nickname: event.target.value })} /></label><label>校区<input list="profile-campus-options" value={draft.campus || ''} onCompositionStart={() => { setComposingLocationField('campus'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('campus', event)} onChange={(event) => updateLocationField('campus', event.target.value)} placeholder="可选择或输入中文" /></label><label>学部<input list="profile-department-options" value={draft.department || ''} onCompositionStart={() => { setComposingLocationField('department'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('department', event)} onChange={(event) => updateLocationField('department', event.target.value)} placeholder="可选择或输入中文" /></label><label>学院<input list="profile-college-options" value={draft.college || ''} onCompositionStart={() => { setComposingLocationField('college'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('college', event)} onChange={(event) => updateLocationField('college', event.target.value)} placeholder="可选择或输入中文" /></label><label>专业<input list="profile-major-options" value={draft.major || ''} onCompositionStart={() => { setComposingLocationField('major'); composingRef.current = true; }} onCompositionEnd={(event) => finishLocationComposition('major', event)} onChange={(event) => updateLocationField('major', event.target.value)} placeholder="可选择或输入中文" /></label><datalist id="profile-campus-options">{locationSuggestions.campuses.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-department-options">{locationSuggestions.departments.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-college-options">{locationSuggestions.colleges.map((item) => <option key={item} value={item} />)}</datalist><datalist id="profile-major-options">{locationSuggestions.majors.map((item) => <option key={item} value={item} />)}</datalist><button className="primary-button full-width" type="submit">保存资料</button></form></section>;
 }
 
 function LoginPage({ state }: { state: AppState }) {
