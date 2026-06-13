@@ -260,7 +260,7 @@ export async function getState() {
   };
 }
 
-export async function loginUser(identifier) {
+export async function loginUser(identifier, requestedRole) {
   await ensureInitialized();
   const db = getPool();
   const loginIdentifier = String(identifier || '').trim();
@@ -268,11 +268,12 @@ export async function loginUser(identifier) {
   const [existing] = await db.execute('SELECT * FROM users WHERE login_identifier = ? LIMIT 1', [loginIdentifier]);
   if (existing.length > 0) return rowToUser(existing[0]);
 
+  const role = requestedRole === 'admin' ? 'admin' : 'user';
   const user = {
     id: id('user'),
     loginIdentifier,
     nickname: loginIdentifier,
-    role: 'user',
+    role,
   };
   await db.execute('INSERT INTO users (id, login_identifier, nickname, role) VALUES (?, ?, ?, ?)', [user.id, user.loginIdentifier, user.nickname, user.role]);
   return user;

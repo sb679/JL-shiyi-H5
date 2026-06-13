@@ -109,7 +109,7 @@ app.get('/api/state', asyncRoute(async (_request, response) => {
 }));
 
 app.post('/api/login', asyncRoute(async (request, response) => {
-  response.json({ user: await loginUser(request.body?.identifier) });
+  response.json({ user: await loginUser(request.body?.identifier, request.body?.role) });
 }));
 
 app.put('/api/users/:userId', asyncRoute(async (request, response) => {
