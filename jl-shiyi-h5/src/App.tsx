@@ -113,6 +113,7 @@ type GoogleBooksResponse = {
 
 type SavedSession = {
   identifier: string;
+  password: string;
   user?: User;
 };
 
@@ -311,14 +312,18 @@ function useAppState() {
       try {
         let nextData = await requestJson<AppData>('/api/state');
         let nextUser: User | null = null;
-        if (savedSession?.identifier) {
-          const loginResult = await requestJson<{ user: User }>('/api/login', {
-            method: 'POST',
-            body: JSON.stringify({ identifier: savedSession.identifier }),
-          });
-          nextUser = loginResult.user;
-          nextData = await requestJson<AppData>('/api/state');
-          writeStorage(SESSION_STORAGE_KEY, { identifier: savedSession.identifier, user: nextUser });
+        if (savedSession?.identifier && savedSession?.password) {
+          try {
+            const loginResult = await requestJson<{ user: User }>('/api/login', {
+              method: 'POST',
+              body: JSON.stringify({ identifier: savedSession.identifier, password: savedSession.password, role: ADMIN_IDENTIFIERS.includes(savedSession.identifier) ? 'admin' : 'user' }),
+            });
+            nextUser = loginResult.user;
+            nextData = await requestJson<AppData>('/api/state');
+            writeStorage(SESSION_STORAGE_KEY, { identifier: savedSession.identifier, password: savedSession.password, user: nextUser });
+          } catch {
+            nextUser = savedSession.user || null;
+          }
         }
         if (!alive) return;
         setUser(nextUser);
@@ -339,17 +344,17 @@ function useAppState() {
     setData(nextData);
   }
 
-  async function login(identifier: string) {
+  async function login(identifier: string, password: string) {
     const loginIdentifier = identifier.trim();
     validateAccount(loginIdentifier);
+    if (!password || password.length < 6) throw new Error('密码至少需要 6 个字符');
     const requestedRole = ADMIN_IDENTIFIERS.includes(loginIdentifier) ? 'admin' as const : 'user' as const;
     if (remoteReady) {
-      const result = await requestJson<{ user: User }>('/api/login', { method: 'POST', body: JSON.stringify({ identifier: loginIdentifier, role: requestedRole }) });
+      const result = await requestJson<{ user: User }>('/api/login', { method: 'POST', body: JSON.stringify({ identifier: loginIdentifier, password, role: requestedRole }) });
       const nextData = await requestJson<AppData>('/api/state');
-      // 以后端返回的 role 为准（服务端可能升级老用户为 admin）
       setUser(result.user);
       setData(nextData);
-      writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, user: result.user });
+      writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, password, user: result.user });
       return;
     }
     const localUser = createLocalUser(loginIdentifier, requestedRole);
@@ -358,18 +363,19 @@ function useAppState() {
       ...current,
       users: current.users.some((item) => item.id === localUser.id) ? current.users : [...current.users, localUser],
     }));
-    writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, user: localUser });
+    writeStorage(SESSION_STORAGE_KEY, { identifier: loginIdentifier, password, user: localUser });
   }
 
   async function updateUser(nextUser: User) {
+    const savedSession = readStorage<SavedSession>(SESSION_STORAGE_KEY);
     if (remoteReady) {
       await replaceWithRemoteState(requestJson<AppData>(`/api/users/${nextUser.id}`, { method: 'PUT', body: JSON.stringify({ ...nextUser, userId: nextUser.id }) }));
       setUser(nextUser);
-      writeStorage(SESSION_STORAGE_KEY, { identifier: nextUser.loginIdentifier, user: nextUser });
+      writeStorage(SESSION_STORAGE_KEY, { identifier: nextUser.loginIdentifier, password: savedSession?.password || '', user: nextUser });
       return;
     }
     setUser(nextUser);
-    writeStorage(SESSION_STORAGE_KEY, { identifier: nextUser.loginIdentifier, user: nextUser });
+    writeStorage(SESSION_STORAGE_KEY, { identifier: nextUser.loginIdentifier, password: savedSession?.password || '', user: nextUser });
     setData((current) => ({
       ...current,
       users: current.users.some((item) => item.id === nextUser.id)
@@ -977,8 +983,12 @@ function ProfilePage({ state }: { state: AppState }) {
 
 function LoginPage({ state }: { state: AppState }) {
   const navigate = useNavigate();
-  const [identifier, setIdentifier] = useState(() => readStorage<SavedSession>(SESSION_STORAGE_KEY)?.identifier || '');
-  return <section className="login-page surface-panel"><div className="login-icon"><BookOpen size={36} /></div><h1>登录 JL拾遗</h1><p>输入自定义账号后进入书城。</p><form onSubmit={(event) => { event.preventDefault(); void state.login(identifier).then(() => navigate('/books')); }}><label>账号<input value={identifier} maxLength={60} onChange={(event) => setIdentifier(event.target.value)} placeholder="中文、英文或数字，最多 60 个" /></label><button className="primary-button full-width" type="submit">登录</button></form></section>;
+  const savedSession = readStorage<SavedSession>(SESSION_STORAGE_KEY);
+  const [identifier, setIdentifier] = useState(() => savedSession?.identifier || '');
+  const [password, setPassword] = useState(() => savedSession?.password || '');
+  const [isRegister, setIsRegister] = useState(false);
+  const [error, setError] = useState('');
+  return <section className="login-page surface-panel"><div className="login-icon"><BookOpen size={36} /></div><h1>{isRegister ? '注册 JL拾遗' : '登录 JL拾遗'}</h1><p>{isRegister ? '输入账号和密码创建新用户。' : '输入账号和密码进入书城。'}</p><form onSubmit={(event) => { event.preventDefault(); setError(''); void state.login(identifier, password).then(() => navigate('/books')).catch((e: unknown) => setError(e instanceof Error ? e.message : '登录失败')); }}><label>账号<input value={identifier} maxLength={60} onChange={(event) => setIdentifier(event.target.value)} placeholder="中文、英文或数字，最多 60 个" /></label><label>密码<input type="password" value={password} maxLength={60} onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 个字符" /></label>{error && <div className="inline-alert">{error}</div>}<button className="primary-button full-width" type="submit">{isRegister ? '注册并登录' : '登录'}</button></form><p className="subtle" style={{ marginTop: 12, textAlign: 'center' }}><button className="ghost-button" type="button" onClick={() => { setIsRegister(!isRegister); setError(''); }}>{isRegister ? '已有账号？去登录' : '没有账号？去注册'}</button></p></section>;
 }
 
 function EmptyState({ title, text }: { title: string; text: string }) {
