@@ -127,7 +127,7 @@ if ($CurrentOrigin -notmatch 'gitee\.com') {
 Write-Host "代码来源: $CurrentOrigin" -ForegroundColor Green
 
 $CurrentCommit = git rev-parse HEAD
-git fetch origin main
+git fetch origin
 
 # 检查 fetch 是否成功
 if ($LASTEXITCODE -ne 0) {
